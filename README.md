@@ -137,6 +137,7 @@ output_path=../output # Output path
 # --plink2_executable [path to plink2 executable (PLINK v2.00a3.7LM 64-bit Intel)]
 # --reference_1000g_folder [path to folder with 1000G reference data]
 # --chain_path [folder with hg19->hg38 and hg38->hg19 chain files]
+# --imputation_info_field [INFO sub-field storing imputation quality metric (default R2)]
 
 # Command:
 NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \

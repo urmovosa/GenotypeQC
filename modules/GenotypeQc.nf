@@ -128,7 +128,7 @@ process FilterFinalVcf {
     container 'quay.io/eqtlgen/eqtlgenimpute:v0.2'
 
     input:
-      tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(imputation_th)
+      tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(imputation_th), val(info_field)
 
     output:
       path("*_filtered.vcf.gz")
@@ -140,7 +140,7 @@ process FilterFinalVcf {
 
     awk 'NR>1 {print \$2}' ${filtered_fam} > iids.txt
 
-    # MAF and INFO/R2 fields can vary in vcf.gz
+    # MAF and INFO fields can vary in vcf.gz
     # TODO: 
     # filter first by samples
     # Then recalculate MAF, HWE and imputation quality score
@@ -151,7 +151,7 @@ process FilterFinalVcf {
     # Then calculate per-chr statistics
     bcftools view \
     -S iids.txt \
-    -i 'MAF>=0.01 && INFO/R2>=0.8' \
+    -i "MAF>=${maf} && INFO/${info_field}>=${imputation_th}" \
     -Oz -o \${chr}_filtered.vcf.gz \
     ${vcf}
 

@@ -40,6 +40,7 @@ def helpMessage() {
       --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet. Use this setting when you have to work offline and your build is hg38.
+      --imputation_info_field       INFO sub-field code that stores imputation quality (default: R2).
 
     """.stripIndent()
 }
@@ -149,6 +150,7 @@ params.gen_qc_steps = "Array"
 
 params.maf_threshold = 0.01
 params.imputation_quality_threshold = 0.8
+params.imputation_info_field = 'R2'
 
 // By default define random non-colliding file names in data folder. If default, these are ignored by corresponding script.
 params.InclusionList = "$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt"
@@ -162,6 +164,7 @@ genome_build_ch = Channel.value(params.genome_build)
 
 maf_ch = Channel.value(params.maf_threshold)
 imputation_quality_ch = Channel.value(params.imputation_quality_threshold)
+imputation_info_field_ch = Channel.value(params.imputation_info_field)
 
 InclusionList_ch = Channel.fromPath(params.InclusionList, checkIfExists:true)
 ExclusionList_ch = Channel.fromPath(params.ExclusionList, checkIfExists:true)
@@ -188,6 +191,7 @@ summary['Gen QC steps']             = params.gen_qc_steps
 summary['Genome Build']             = params.genome_build
 summary['MAF filter']               = params.maf_threshold
 summary['Imputation filter']        = params.imputation_quality_threshold
+summary['Imputation INFO code']     = params.imputation_info_field
 summary['S threshold']              = params.GenOutThresh
 summary['Gen SD threshold']         = params.GenSdThresh
 summary['GTP file']                 = params.gtp
@@ -281,6 +285,7 @@ workflow {
     .combine(snpfilter_ch)
     .combine(maf_ch)
     .combine(imputation_quality_ch)
+    .combine(imputation_info_field_ch)
 
     FILTERFINALVCF(vcf_filter_input_ch)
 
