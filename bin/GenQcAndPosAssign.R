@@ -292,6 +292,9 @@ if (args$genome_build %in% c("hg19", "GRCh37")) {
   stop(sprintf("Genome build %s is not recognized as an available genome build!", args$genome_build))
 }
 
+analysis_ucsc_code <- "hg38"
+needs_liftover_to_hg38 <- ucsc_code %in% c("hg18", "hg19")
+
 bed_simplepath <- stringr::str_replace(args$target_bed, ".bed", "")
 
 # Make output folder structure
@@ -372,18 +375,18 @@ file.exists(paste0(chain_path, "/hg38ToHg19.over.chain.gz"))){message(paste0("Fo
 ## Calculate AFs for reference data
 system(paste0(PLINK2, " --bfile ", ref_1000g_prefix, " --threads 4 --freq 'cols=+pos' --out 1000Gref"))
 
-if ("hg19" != ucsc_code) {
+if (needs_liftover_to_hg38) {
   target_frequencies <- fread("1000Gref.afreq", sep="\t", data.table=F, header=T,
                  col.names=c("chr", "pos", "ID", "REF", "ALT", "ALT_FREQS", "OBS_CT"))
 
 if (!is.null(args$chain_path) && args$chain_path != "") {
   target_frequencies_mapped <- snp_modifyBuild2(
     target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-    from = "hg19", to = ucsc_code, chain_path = chain_path)
+    from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
 }else{
   target_frequencies_mapped <- snp_modifyBuild(
     target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-    from = "hg19", to = ucsc_code)
+    from = "hg19", to = analysis_ucsc_code)
 }
   colnames(target_frequencies_mapped)[1:2] <- c("#CHROM", "POS")
 
@@ -577,7 +580,7 @@ if (23 %in% sex_check_data_set_chromosomes) {
     message("Using predefined pruned variants for sex-check:")
     message(pruned_variants_sex_check)
 
-    if (ucsc_code != "hg19") {
+    if (needs_liftover_to_hg38) {
       variants_sex_check <- fread(
         pruned_variants_sex_check, sep = " ", data.table = FALSE, header = FALSE,
         col.names = c("chr", "pos", "pos.end", "id"))
@@ -587,11 +590,11 @@ if (23 %in% sex_check_data_set_chromosomes) {
     if (!is.null(args$chain_path) && args$chain_path != "") {
         variants_sex_check_new <- snp_modifyBuild2(
         variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-        from = "hg19", to = ucsc_code, chain_path = chain_path)
+      from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
     }else{
         variants_sex_check_new <- snp_modifyBuild(
         variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-        from = "hg19", to = ucsc_code)
+      from = "hg19", to = analysis_ucsc_code)
     }
 
       variants_sex_check_new$chr <- "23"
@@ -765,7 +768,7 @@ message("Projecting samples to 1000G reference.")
 unrelated_ref_samples <- fread(args$sample_list, keepLeadingZeros = TRUE, colClasses = 'character')
 unrelated_ref_samples <- as.numeric(unrelated_ref_samples$ind.row)
 
-if (ucsc_code != "hg19" && !is.null(args$chain_path) && args$chain_path != "") {
+if (needs_liftover_to_hg38 && !is.null(args$chain_path) && args$chain_path != "") {
 
 message("Using offline version of PCA sample projection function.")
 
@@ -774,7 +777,7 @@ map_new <- setNames(target_bed$map[-3], c("chr", "rsid", "pos", "a1", "a0"))
 map_new_lifted <- snp_modifyBuild2(map_new, 
 liftOver = R.utils::getRelativePath(args$liftover_path), 
 from = ucsc_code,
-to = "hg19", 
+to = analysis_ucsc_code, 
 chain_path = chain_path)
 
 lifted_bim <- data.table(chr = map_new_lifted$chr,
@@ -797,8 +800,8 @@ proj_PCA <- bed_projectPCA(
   strand_flip = TRUE,
   join_by_pos = TRUE,
   match.min.prop = 0.01,
-  build.new = "hg19",
-  build.ref = "hg19",
+  build.new = analysis_ucsc_code,
+  build.ref = analysis_ucsc_code,
   liftOver = R.utils::getRelativePath(args$liftover_path),
   verbose = TRUE,
   ncores = 4
@@ -817,7 +820,7 @@ proj_PCA <- bed_projectPCA(
   join_by_pos = TRUE,
   match.min.prop = 0.01,
   build.new = ucsc_code,
-  build.ref = "hg19",
+  build.ref = analysis_ucsc_code,
   liftOver = R.utils::getRelativePath(args$liftover_path),
   verbose = TRUE,
   ncores = 4
