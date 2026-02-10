@@ -24,7 +24,7 @@ Performs the following main steps:
 
 ### Requirements for the system
 
-- Have access to HPC or workstation (preferrably with multiple cores).
+- Have access to HPC or workstation (preferably with multiple cores).
 - Have Bash >=3.2 installed.
 - Have Java >=17 installed.
 - HPC has Singularity installed and running.
@@ -40,20 +40,24 @@ Or just download this from the gitlab/github download link and unzip.
 ### Input files
 
 - Per-chromosome genotype files in `.vcf` format. Genome build has to be in **hg19/GRCh37 (default)** or **hg38/GRCh38**. Pathname extension using globbing is allowed (using `*` or `?`), but the path should be provided without pathway extension.
-- It is advisable that supplied is als `.fam` file that also includes observed sex for all samples (format: males=1, females=2), so that pipeline does extra check on that. However, if this information is not available for all samples, pipeline just skips this check. n.
+- It is advisable to supply a `.fam` file that also includes observed sex for all samples (format: males=1, females=2), so the pipeline does an extra check on that. However, if this information is not available for all samples, the pipeline skips this check.
 - Genotype-to-phenotype linking file (gtp). Tab-delimited file, no header, 2 columns: sample ID in genotype data, corresponding sample ID in gene expression data.
 
 ### Required inputs
 
 `--cohort_name`                 Name of the cohort.
 
-`--vcf`                         Path to the imputed genotype files in `vcf` format (without extensions bed/bim/fam).
+`--vcf`                         Path to the imputed genotype files in `vcf` format (glob allowed). Required if `--bfile` is not provided.
+
+`--bfile`                       Path prefix to unimputed genotype files in PLINK bed/bim/fam format (without extensions). Required if `--vcf` is not provided.
 
 `--genome_build`                Genome build of the cohort. Either hg19, GRCh37, hg38 or GRCh38. Defaults to hg19.
 
 `--gtp`                         Genotype-to-expression linking file. Tab-delimited, no header. First column: sample ID for genotype data. Second column: corresponding sample ID for gene expression data. Can be used to filter samples from the analysis.
 
-`--outdir`                      Path to the output directory.
+`--snpfilter`                   Gzipped file with HapMap3 variants.
+
+`--outputDir`                   Path to the output directory.
     
 ### Additional settings
 
@@ -62,6 +66,8 @@ There are some arguments which can be used to adjust certain outlier detection t
 `--GenOutThresh` Threshold for declaring genotype sample genetic outlier, based on LOF "outlierness" metric. Default is 0.4.
 
 `--GenSdThresh` Threshold for declaring genotype sample genetic outlier, based on the deviation from the means of first two genetic PCs. Defaults to 3 SD from the mean.
+
+`--gen_qc_steps` Either `Array` (default) or `WGS` (generic + WGS QC; only valid with VCF datasets).
 
 Optional arguments:
 
@@ -79,6 +85,8 @@ Optional arguments:
 
 `--reference_1000g_folder`  Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
 
+`--chain_path` Path to folder containing hg19ToHg38 and hg38ToHg19 chain files (only needed for hg38/GRCh38).
+
 `--imputation_info_field` INFO sub-field that stores the imputation quality metric (default `R2`).
 
 ### Offline / isolated run
@@ -90,7 +98,7 @@ See the offline usage instructions and helper script:
 
 ### Running the data QC command
 
-Go to folder `dataqc` and modify the Slurm script template `submit_CvdlinkGenotypeDataQc_pipeline_template.sh` with your input paths. Below is an example template for Slurm scheduler.
+Modify the Slurm script template `submit_CvdlinkGenotypeDataQc_pipeline_template.sh` with your input paths. Below is an example template for Slurm scheduler.
 
 ```bash
 #!/bin/bash

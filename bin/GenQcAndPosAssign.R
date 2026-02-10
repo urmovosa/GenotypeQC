@@ -266,7 +266,7 @@ print(args$plink_executable)
 print(args$plink2_executable)
 print(args$chain_path)
 
-if (!is.numeric(args$S_threshold) | !is.numeric(args$SD_threshold) | !is.numeric(args$SD_threshold)){
+if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold)) {
   message("Some of the QC thresholds is not numeric!")
   stop()
 }
@@ -292,6 +292,7 @@ if (args$genome_build %in% c("hg19", "GRCh37")) {
   stop(sprintf("Genome build %s is not recognized as an available genome build!", args$genome_build))
 }
 
+# Reference analysis is anchored on hg38. Only lift if input is hg18/hg19.
 analysis_ucsc_code <- "hg38"
 needs_liftover_to_hg38 <- ucsc_code %in% c("hg18", "hg19")
 
@@ -352,8 +353,9 @@ make_executable(PLINK)
 
 ref_1000g_prefix <- "data"
 if (!is.null(args$ref_1000g) && args$ref_1000g != "") {
-  if (endsWith(args$ref_1000g, "1000G_phase3_common_norel"))
-  ref_1000g_prefix <- args$ref_1000g
+  if (endsWith(args$ref_1000g, "1000G_phase3_common_norel")) {
+    ref_1000g_prefix <- args$ref_1000g
+  }
 }
 
 if (file.exists(paste0(ref_1000g_prefix, ".bed"))
@@ -367,10 +369,12 @@ if (file.exists(paste0(ref_1000g_prefix, ".bed"))
   bedfile <- download_1000G(dirname(ref_1000g_prefix))
 }
 
-## Chain files for LiftOver
+## Chain files for LiftOver (only used when lifting hg18/hg19 -> hg38)
 chain_path <- args$chain_path
-if (file.exists(paste0(chain_path, "/hg19ToHg38.over.chain.gz")) & 
-file.exists(paste0(chain_path, "/hg38ToHg19.over.chain.gz"))){message(paste0("Found liftOver chain files at ", chain_path))}
+if (file.exists(paste0(chain_path, "/hg19ToHg38.over.chain.gz")) &
+    file.exists(paste0(chain_path, "/hg38ToHg19.over.chain.gz"))) {
+  message(paste0("Found liftOver chain files at ", chain_path))
+}
 
 ## Calculate AFs for reference data
 system(paste0(PLINK2, " --bfile ", ref_1000g_prefix, " --threads 4 --freq 'cols=+pos' --out 1000Gref"))
@@ -379,15 +383,15 @@ if (needs_liftover_to_hg38) {
   target_frequencies <- fread("1000Gref.afreq", sep="\t", data.table=F, header=T,
                  col.names=c("chr", "pos", "ID", "REF", "ALT", "ALT_FREQS", "OBS_CT"))
 
-if (!is.null(args$chain_path) && args$chain_path != "") {
-  target_frequencies_mapped <- snp_modifyBuild2(
-    target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-    from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
-}else{
-  target_frequencies_mapped <- snp_modifyBuild(
-    target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-    from = "hg19", to = analysis_ucsc_code)
-}
+  if (!is.null(args$chain_path) && args$chain_path != "") {
+    target_frequencies_mapped <- snp_modifyBuild2(
+      target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
+      from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
+  } else {
+    target_frequencies_mapped <- snp_modifyBuild(
+      target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
+      from = "hg19", to = analysis_ucsc_code)
+  }
   colnames(target_frequencies_mapped)[1:2] <- c("#CHROM", "POS")
 
   fwrite(target_frequencies_mapped[!is.na(target_frequencies_mapped$POS),], "1000Gref.afreq.gz", col.names=T, row.names=F, quote=F, sep="\t")
@@ -415,7 +419,9 @@ gte <- fread(args$gen_phe, sep = "\t", header = FALSE,
 summary_table <- data.frame(stage = "Raw file", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
 Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
 
-if(nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]) < 100){stop("Less than 100 samples are in genotype-to-expression file!")}
+if (nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]) < 100) {
+  stop("Less than 100 samples are in genotype-to-expression file!")
+}
 
 # Prepare and normalise fam file
 #
@@ -448,10 +454,10 @@ if (!is.null(args$fam) && args$fam != "") {
 }
 
 # Write normalized fam
-fwrite(fam, "fam_normalized.fam", col.names=F, row.names=F, quote=F, sep="\t")
+fwrite(fam, "fam_normalized.fam", col.names = F, row.names = F, quote = F, sep = "\t")
 
 ## If specified, keep in only samples which are in the sample whitelist
-if (args$inclusion_list != "" & args$inclusion_list != "EmpiricalProbeMatching_AffyHumanExon.txt"){
+if (args$inclusion_list != "" && args$inclusion_list != "EmpiricalProbeMatching_AffyHumanExon.txt") {
   inc_list <- fread(args$inclusion_list, header = FALSE,
                     keepLeadingZeros = TRUE, colClasses = "character")
   samples_to_include <- fam[fam$`sample.ID` %in% inc_list$V1, ]
@@ -467,7 +473,7 @@ if (args$inclusion_list != "" & args$inclusion_list != "EmpiricalProbeMatching_A
 ## Keep in only samples which are present in genotype-to-expression file AND additional up to 5000 samples (better phasing)
 samples_to_include_gte <- fam[fam$`sample.ID` %in% gte$V1, ]
 
-if (exists("samples_to_include")){
+if (exists("samples_to_include")) {
   print(table(samples_to_include_gte$`sample.ID` %in% samples_to_include$`sample.ID`))
   samples_to_include_gte <- samples_to_include_gte[samples_to_include_gte$`sample.ID` %in% samples_to_include$`sample.ID`, ]
   fam <- fam[fam$`sample.ID` %in% samples_to_include$`sample.ID`, ]
@@ -475,10 +481,12 @@ if (exists("samples_to_include")){
 
 samples_to_include_temp <- samples_to_include_gte
 
-if (exists("samples_to_include") && nrow(samples_to_include) > 0){
+if (exists("samples_to_include") && nrow(samples_to_include) > 0) {
   samples_to_include <- samples_to_include[samples_to_include$`sample.ID` %in% samples_to_include_temp$`sample.ID`, ]
   print(nrow(samples_to_include))
-} else {samples_to_include <- samples_to_include_temp}
+} else {
+  samples_to_include <- samples_to_include_temp
+}
 
 temp_QC <- data.frame(stage = "Samples in genotype-to-phenotype file", Nr_of_SNPs = target_bed$ncol,
 Nr_of_samples = nrow(samples_to_include),
@@ -486,11 +494,11 @@ Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.ID`, ]))
 summary_table <- rbind(summary_table, temp_QC)
 
 # Remove samples which are in the exclusion list
-if (args$exclusion_list != "" & args$exclusion_list != "EmpiricalProbeMatching_AffyU219.txt"){
-exc_list <- fread(args$exclusion_list, header = FALSE,
-                  keepLeadingZeros = TRUE, colClasses = "character")
-samples_to_include <- samples_to_include[!samples_to_include$`sample.ID` %in% exc_list$V1, ]
-message("Sample exclusion filter active!")
+if (args$exclusion_list != "" && args$exclusion_list != "EmpiricalProbeMatching_AffyU219.txt") {
+  exc_list <- fread(args$exclusion_list, header = FALSE,
+                    keepLeadingZeros = TRUE, colClasses = "character")
+  samples_to_include <- samples_to_include[!samples_to_include$`sample.ID` %in% exc_list$V1, ]
+  message("Sample exclusion filter active!")
 }
 
 fwrite(data.table(`#FID` = '0', `IID` = samples_to_include$`sample.ID`), "SamplesToInclude.txt", sep = "\t", quote = FALSE, col.names = TRUE, row.names = FALSE)
@@ -531,8 +539,7 @@ snp_plinkQC(
   verbose = TRUE
 )
 
-qc_bim <- fread(paste0(bed_simplepath, "_QC.bim"),
-                data.table = FALSE, keepLeadingZeros = TRUE)
+qc_bim <- fread(paste0(bed_simplepath, "_QC.bim"), data.table = FALSE, keepLeadingZeros = TRUE)
 consecutive_runs <- unlist(lapply(rle(qc_bim[,2])$lengths, seq_len))
 consequtive_runs_values <- qc_bim[consecutive_runs != 1, 2]
 qc_bim[consecutive_runs != 1, 2] <- paste(qc_bim[consecutive_runs != 1, 2], consecutive_runs[consecutive_runs != 1], sep = "_")
@@ -567,7 +574,6 @@ if (23 %in% sex_check_data_set_chromosomes) {
   message("Do sex check.")
 
   # Split x if needed
-
   pruned_variants_sex_check <- args$pruned_variants_sex_check
 
   if (!is.null(pruned_variants_sex_check)
@@ -587,20 +593,21 @@ if (23 %in% sex_check_data_set_chromosomes) {
 
       variants_sex_check$chr <- "X"
 
-    if (!is.null(args$chain_path) && args$chain_path != "") {
+      if (!is.null(args$chain_path) && args$chain_path != "") {
         variants_sex_check_new <- snp_modifyBuild2(
-        variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-      from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
-    }else{
+          variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
+          from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
+      } else {
         variants_sex_check_new <- snp_modifyBuild(
-        variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-      from = "hg19", to = analysis_ucsc_code)
-    }
+          variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
+          from = "hg19", to = analysis_ucsc_code)
+      }
 
       variants_sex_check_new$chr <- "23"
       variants_sex_check_new$pos.end <- variants_sex_check_new$pos
 
-      fwrite(variants_sex_check_new[!is.na(variants_sex_check_new$pos),], "mapped_sex_check_variants.txt", col.names=F, row.names=F, quote=F, sep=" ")
+            fwrite(variants_sex_check_new[!is.na(variants_sex_check_new$pos), ], "mapped_sex_check_variants.txt",
+              col.names = F, row.names = F, quote = F, sep = " ")
 
       system(paste0(
         PLINK, " --bfile ", bed_simplepath, "_QC", " --extract range mapped_sex_check_variants.txt",
@@ -676,7 +683,7 @@ if (23 %in% sex_check_data_set_chromosomes) {
 } else {
   warning("No X chromosome present. Skipping sex-check...")
 
-  sexcheck <- sex_check_samples[,c(1,2,5)]
+  sexcheck <- sex_check_samples[, c(1, 2, 5)]
   colnames(sexcheck) <- c("FID", "IID", "PEDSEX")
   sexcheck$PEDSEX_COPY <- sexcheck$PEDSEX
   sexcheck$STATUS <- NA_character_
@@ -769,62 +776,65 @@ unrelated_ref_samples <- fread(args$sample_list, keepLeadingZeros = TRUE, colCla
 unrelated_ref_samples <- as.numeric(unrelated_ref_samples$ind.row)
 
 if (needs_liftover_to_hg38 && !is.null(args$chain_path) && args$chain_path != "") {
+  message("Using offline version of PCA sample projection function.")
 
-message("Using offline version of PCA sample projection function.")
+  map_new <- setNames(target_bed$map[-3], c("chr", "rsid", "pos", "a1", "a0"))
 
-map_new <- setNames(target_bed$map[-3], c("chr", "rsid", "pos", "a1", "a0"))
+  map_new_lifted <- snp_modifyBuild2(
+    map_new,
+    liftOver = R.utils::getRelativePath(args$liftover_path),
+    from = ucsc_code,
+    to = analysis_ucsc_code,
+    chain_path = chain_path
+  )
 
-map_new_lifted <- snp_modifyBuild2(map_new, 
-liftOver = R.utils::getRelativePath(args$liftover_path), 
-from = ucsc_code,
-to = analysis_ucsc_code, 
-chain_path = chain_path)
+  lifted_bim <- data.table(
+    chr = map_new_lifted$chr,
+    rsid = map_new_lifted$rsid,
+    seq = 0,
+    pos = map_new_lifted$pos,
+    a1 = map_new_lifted$a1,
+    a0 = map_new_lifted$a0
+  )
 
-lifted_bim <- data.table(chr = map_new_lifted$chr,
-rsid = map_new_lifted$rsid,
-seq = 0,
-pos = map_new_lifted$pos,
-a1 = map_new_lifted$a1,
-a0 = map_new_lifted$a0)
+  fwrite(lifted_bim[!is.na(lifted_bim$pos), ], "lifted_map.bim", sep = "\t", col.names = FALSE, row.names = FALSE)
 
-fwrite(lifted_bim[!is.na(lifted_bim$pos), ], "lifted_map.bim", sep = "\t", col.names = FALSE, row.names = FALSE)
+  system(paste0(PLINK,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --make-bed --out temp_for_PCA"))
 
-system(paste0(PLINK,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --make-bed --out temp_for_PCA"))
+  proj_PCA <- bed_projectPCA(
+    obj.bed.ref = ref_bed,
+    ind.row.ref = unrelated_ref_samples,
+    obj.bed.new = bed("temp_for_PCA.bed"),
+    ind.row.new = indices_of_het_passed_samples,
+    k = 10,
+    strand_flip = TRUE,
+    join_by_pos = TRUE,
+    match.min.prop = 0.01,
+    build.new = analysis_ucsc_code,
+    build.ref = analysis_ucsc_code,
+    liftOver = R.utils::getRelativePath(args$liftover_path),
+    verbose = TRUE,
+    ncores = 4
+  )
 
-proj_PCA <- bed_projectPCA(
-  obj.bed.ref = ref_bed,
-  ind.row.ref = unrelated_ref_samples,
-  obj.bed.new = bed("temp_for_PCA.bed"),
-  ind.row.new = indices_of_het_passed_samples,
-  k = 10,
-  strand_flip = TRUE,
-  join_by_pos = TRUE,
-  match.min.prop = 0.01,
-  build.new = analysis_ucsc_code,
-  build.ref = analysis_ucsc_code,
-  liftOver = R.utils::getRelativePath(args$liftover_path),
-  verbose = TRUE,
-  ncores = 4
-)
-
-system("rm temp_for_PCA*")
+  system("rm temp_for_PCA*")
 
 } else {
-proj_PCA <- bed_projectPCA(
-  obj.bed.ref = ref_bed,
-  ind.row.ref = unrelated_ref_samples,
-  obj.bed.new = target_bed,
-  ind.row.new = indices_of_het_passed_samples,
-  k = 10,
-  strand_flip = TRUE,
-  join_by_pos = TRUE,
-  match.min.prop = 0.01,
-  build.new = ucsc_code,
-  build.ref = analysis_ucsc_code,
-  liftOver = R.utils::getRelativePath(args$liftover_path),
-  verbose = TRUE,
-  ncores = 4
-)
+  proj_PCA <- bed_projectPCA(
+    obj.bed.ref = ref_bed,
+    ind.row.ref = unrelated_ref_samples,
+    obj.bed.new = target_bed,
+    ind.row.new = indices_of_het_passed_samples,
+    k = 10,
+    strand_flip = TRUE,
+    join_by_pos = TRUE,
+    match.min.prop = 0.01,
+    build.new = ucsc_code,
+    build.ref = analysis_ucsc_code,
+    liftOver = R.utils::getRelativePath(args$liftover_path),
+    verbose = TRUE,
+    ncores = 4
+  )
 }
 
 ## Visualise PCs
@@ -901,7 +911,8 @@ p <- p00 + p0 + p1 + p2 + p3 + p4 + p5 + plot_layout(nrow = 4)
 
 ggsave(paste0(args$output, "/gen_plots/SamplesPCsProjectedTo1000G.png"), type = "cairo", height = 20, width = 9.5 * 1.6, units = "in", dpi = 300)
 ggsave(paste0(args$output, "/gen_plots/SamplesPCsProjectedTo1000G.pdf"), height = 20, width = 9.5 * 1.6, units = "in", dpi = 300)
-fwrite(abi[, -c(2, 3, ncol(abi))], paste0(args$output, "/gen_data_summary/1000G_PC_projections.txt"), sep = "\t", quote = FALSE )
+fwrite(abi[, -c(2, 3, ncol(abi))], paste0(args$output, "/gen_data_summary/1000G_PC_projections.txt"),
+  sep = "\t", quote = FALSE)
 
 ## Assign each sample to the superpopulation
 message("Assign each sample to 1000G superpopulation.")
@@ -916,38 +927,37 @@ target_samples <- target_samples[, -1]
 population_assign_res <- data.frame(sample = rownames(target_samples), abi = rownames(target_samples))
 
 #### EUR
-for(population in c("EUR", "EAS", "AMR", "SAS", "AFR")){
-abi_e <- abi2[abi2$Superpopulation == population, ]
-head(abi_e)
+for (population in c("EUR", "EAS", "AMR", "SAS", "AFR")) {
+  abi_e <- abi2[abi2$Superpopulation == population, ]
+  head(abi_e)
 
-sup_pop_samples <- abi_e[, -c(2, 3, ncol(abi_e))]
+  sup_pop_samples <- abi_e[, -c(2, 3, ncol(abi_e))]
 
-sup_pop_samples <- sup_pop_samples[, c(1:4)]
-rownames(sup_pop_samples) <- sup_pop_samples$sample
-sup_pop_samples <- sup_pop_samples[, -1]
+  sup_pop_samples <- sup_pop_samples[, c(1:4)]
+  rownames(sup_pop_samples) <- sup_pop_samples$sample
+  sup_pop_samples <- sup_pop_samples[, -1]
 
-head(sup_pop_samples)
+  head(sup_pop_samples)
 
-comb <- rbind(target_samples, sup_pop_samples)
-head(comb)
-distance <- as.matrix(dist(comb, method = "euclidean"))
-head(distance)
-distance <- distance[c(1:nrow(target_samples)), -c(1:nrow(target_samples))]
-head(distance)
+  comb <- rbind(target_samples, sup_pop_samples)
+  head(comb)
+  distance <- as.matrix(dist(comb, method = "euclidean"))
+  head(distance)
+  distance <- distance[c(1:nrow(target_samples)), -c(1:nrow(target_samples))]
+  head(distance)
 
-head(rowMeans(distance))
+  head(rowMeans(distance))
 
-distance <- data.frame(sample = rownames(target_samples), MeanDistance = rowMeans(distance))
-colnames(distance)[2] <- population
+  distance <- data.frame(sample = rownames(target_samples), MeanDistance = rowMeans(distance))
+  colnames(distance)[2] <- population
 
-population_assign_res <- cbind(population_assign_res, distance[, -1])
+  population_assign_res <- cbind(population_assign_res, distance[, -1])
 
-print(paste("distance:", population))
-
+  print(paste("distance:", population))
 }
 
 colnames(population_assign_res)[3:ncol(population_assign_res)] <- c("EUR", "EAS", "AMR", "SAS", "AFR")
-fwrite(population_assign_res[, -1], paste0(args$output, "/gen_data_summary/PopAssignResults.txt"), sep = "\t", quote = FALSE )
+fwrite(population_assign_res[, -1], paste0(args$output, "/gen_data_summary/PopAssignResults.txt"), sep = "\t", quote = FALSE)
 
 # Find related samples
 message("Find related samples.")
@@ -1010,7 +1020,7 @@ if (length(related_individuals) > 0) {
     least_vertex_samples <- names(degrees_named)[min(degrees_named) == degrees_named]
 
     # Prioritize vertices which are in genotype-to-expression file
-    if (length(least_vertex_samples[least_vertex_samples %in% gte$V1]) > 0){
+    if (length(least_vertex_samples[least_vertex_samples %in% gte$V1]) > 0) {
       # if there are multiple related sample IDs from GTE, then take just first
       curr_vertex <- least_vertex_samples[least_vertex_samples %in% gte$V1][1]
     } else {
@@ -1048,8 +1058,8 @@ if (length(related_individuals) > 0) {
 }
 
 temp_QC <- data.frame(stage = "Relatedness for eQTL samples: thr. KING>2^-4.5", Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = length(indices_of_passed_samples),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% het_s[!het_s$ID %in% samples_to_remove_due_to_relatedness, ]$ID, ])
+  Nr_of_samples = length(indices_of_passed_samples),
+  Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% het_s[!het_s$ID %in% samples_to_remove_due_to_relatedness, ]$ID, ])
 )
 summary_table <- rbind(summary_table, temp_QC)
 
@@ -1099,12 +1109,14 @@ if (any(sd_outlier_selection)) {
 }
 
 PCs$outlier <- "no"
-if (nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]) > 0){
-PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]$outlier <- "S outlier"}
-if(nrow(PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]) > 0){
-PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]$outlier <- "SD outlier"}
-if(nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]) > 0){
-PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]$outlier <- "S and SD outlier"
+if (nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]) > 0) {
+  PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]$outlier <- "S outlier"
+}
+if (nrow(PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]) > 0) {
+  PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]$outlier <- "SD outlier"
+}
+if (nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]) > 0) {
+  PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]$outlier <- "S and SD outlier"
 }
 # For first 2 PCs also remove samples which deviate from the mean
 
