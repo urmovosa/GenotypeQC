@@ -79,6 +79,15 @@ Optional arguments:
 
 `--reference_1000g_folder`  Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
 
+`--imputation_info_field` INFO sub-field that stores the imputation quality metric (default `R2`).
+
+### Offline / isolated run
+
+See the offline usage instructions and helper script:
+
+- [docs/OFFLINE.md](docs/OFFLINE.md)
+- [scripts/offline_fetch.sh](scripts/offline_fetch.sh)
+
 ### Running the data QC command
 
 Go to folder `dataqc` and modify the Slurm script template `submit_CvdlinkGenotypeDataQc_pipeline_template.sh` with your input paths. Below is an example template for Slurm scheduler.
