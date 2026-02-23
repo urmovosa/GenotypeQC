@@ -145,6 +145,15 @@ read_fam <- function(path) {
   return(fam)
 }
 
+# Normalize chromosome labels to 1-22 and X (no "chr" prefix).
+standardize_chr_labels <- function(chromosomes) {
+  chr <- as.character(chromosomes)
+  chr <- sub("^chr", "", chr, ignore.case = TRUE)
+  chr <- toupper(chr)
+  chr[chr == "23"] <- "X"
+  chr
+}
+
 # Function modified from bigsnpr to work with offline chain files
 snp_modifyBuild2 <- function(info_snp,
                              liftOver,
@@ -231,6 +240,7 @@ option_list <- list(
     make_option(c("-e", "--exclusion_list"), type = "character",
     help = "Path to the file with sample IDs to exclude. This also removes samples from inclusion list."),
     make_option(c("-b", "--genome_build"), type = "character",
+    default = "hg19",
     help = "Genome build of the target genotype file."),
     make_option(c("--liftover_path"), type = "character",
     help = "Liftover executable."),
@@ -407,11 +417,14 @@ message("Read in target data.")
 target_bed <- bed(args$target_bed)
 target_bed$.fam <- read_fam(args$target_bed)
 
+# Standardize chromosome labels in the in-memory map for downstream checks.
+target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
+
 # Check chromosome count in input files
 chromosomes_present <- sort(unique(target_bed$map$chromosome))
-autosomes_present <- chromosomes_present[chromosomes_present %in% 1:22]
-has_x_chr <- 23 %in% chromosomes_present
-valid_chromosome_count <- length(autosomes_present) >= 22 && (has_x_chr || length(chromosomes_present) == 22)
+autosomes_present <- chromosomes_present[chromosomes_present %in% as.character(1:22)]
+has_x_chr <- "X" %in% chromosomes_present
+valid_chromosome_count <- length(autosomes_present) == 22 && (has_x_chr || length(chromosomes_present) == 22)
 
 if (!valid_chromosome_count) {
   stop(sprintf(
@@ -565,6 +578,9 @@ ref_bed <- bed(paste0(ref_1000g_prefix, ".bed"))
 target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
 target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
 
+# Standardize chromosome labels after QC reload.
+target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
+
 temp_QC <- data.frame(stage = "SNP CR>0.95; HWE P>1e-6; MAF>0.01; GENO<0.05; MIND<0.05", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
 Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
 
@@ -581,7 +597,7 @@ sex_check_out_path <- paste0(args$output, "/gen_data_QCd/SexCheck.txt")
 sex_check_removed_out_path <- paste0(args$output, "/gen_data_QCd/SexCheckFailed.txt")
 sex_check_samples <- target_bed$fam
 
-if (23 %in% sex_check_data_set_chromosomes) {
+if ("X" %in% sex_check_data_set_chromosomes) {
 
   # Do sex check
   message("Do sex check.")
