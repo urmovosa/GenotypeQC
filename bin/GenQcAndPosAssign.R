@@ -407,6 +407,19 @@ message("Read in target data.")
 target_bed <- bed(args$target_bed)
 target_bed$.fam <- read_fam(args$target_bed)
 
+# Check chromosome count in input files
+chromosomes_present <- sort(unique(target_bed$map$chromosome))
+autosomes_present <- chromosomes_present[chromosomes_present %in% 1:22]
+has_x_chr <- 23 %in% chromosomes_present
+valid_chromosome_count <- length(autosomes_present) >= 22 && (has_x_chr || length(chromosomes_present) == 22)
+
+if (!valid_chromosome_count) {
+  stop(sprintf(
+    "Invalid number of chromosomes in input data. Expected 22 or 23. Found: %s",
+    paste(chromosomes_present, collapse = ", ")
+  ))
+}
+
 ## Calculate AFs for target data
 system(paste0(PLINK2, " --bfile ", bed_simplepath, " --threads 4 --freq 'cols=+pos' --out targetfile"))
 system("gzip targetfile.afreq --force")
