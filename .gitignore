@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Nextflow
+.nextflow/
+.nextflow.log
+.nextflow.log.*
+.nextflow.cache/
+work/
+trace.txt
+report.html
+timeline.html
+dag.html
+dag.*.html
+
+# Non-source files
+plink/
+*.zip

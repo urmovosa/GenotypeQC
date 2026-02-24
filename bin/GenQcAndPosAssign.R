@@ -126,7 +126,7 @@ snp_plinkKINGQC <- function(plink2.path,
 
 print(system_verbose)
 
-# Function
+# Read fam file (given a path to .bed or .fam file)
 read_fam <- function(path) {
   NAMES.FAM <- c("family.ID", "sample.ID", "paternal.ID",
                  "maternal.ID", "sex", "affection")
@@ -145,13 +145,90 @@ read_fam <- function(path) {
   return(fam)
 }
 
-# Normalize chromosome labels to 1-22 and X (no "chr" prefix).
+# Normalize chromosome labels (remove "chr" prefix)
 standardize_chr_labels <- function(chromosomes) {
   chr <- as.character(chromosomes)
   chr <- sub("^chr", "", chr, ignore.case = TRUE)
   chr <- toupper(chr)
   chr[chr == "23"] <- "X"
   chr
+}
+
+# Sanity check genome build using validation rsIDs
+check_genome_build <- function(target_bed_obj, genome_build) {
+  # Load a sample of HapMap3 variants with different locations in hg19/hg38
+  validation_path <- file.path("data", "validation_snps.tsv")
+  if (!file.exists(validation_path)) {
+    stop(sprintf(
+      "Genome build validation failed: validation variants file not found at %s.",
+      validation_path
+    ))
+  }
+
+  validation_variants <- data.table::fread(
+    validation_path,
+    sep = "\t",
+    header = TRUE,
+    data.table = FALSE
+  )
+
+  required_cols <- c("rsid", "pos_hg19", "pos_hg38")
+  if (!all(required_cols %in% names(validation_variants))) {
+    stop(sprintf(
+      "Genome build validation failed: validation variants file must contain columns: %s.",
+      paste(required_cols, collapse = ", ")
+    ))
+  }
+
+  validation_variants$rsid <- as.character(validation_variants$rsid)
+  validation_variants$pos_hg19 <- as.integer(validation_variants$pos_hg19)
+  validation_variants$pos_hg38 <- as.integer(validation_variants$pos_hg38)
+
+  # Assume standard bigsnpr schema for input data column names
+  target_map <- data.frame(
+    rsid = as.character(target_bed_obj$map$marker.ID),
+    pos = as.integer(target_bed_obj$map$physical.pos),
+    stringsAsFactors = FALSE
+  )
+  build_is_hg38 <- genome_build %in% c("hg38", "GRCh38")
+  build_is_hg18 <- genome_build %in% c("hg18", "GRCh36")
+
+  merge_expected <- function(pos_col, expected_label) {
+    expected <- validation_variants[, c("rsid", pos_col)]
+    names(expected)[2] <- expected_label
+    merged <- merge(expected, target_map, by = "rsid")
+    if (nrow(merged) == 0) {
+      stop("Genome build check failed: none of the validation variants were found in the input data.")
+    }
+    merged
+  }
+
+  if (build_is_hg18) {
+    merged_hg38 <- merge_expected("pos_hg38", "pos_hg38_expected")
+
+    matches_hg38 <- merged_hg38$pos_hg38_expected == merged_hg38$pos
+    if (any(matches_hg38, na.rm = TRUE)) {
+      bad <- merged_hg38[matches_hg38, ]
+      stop(sprintf(
+        "Genome build check failed: %d validation variants match hg38 location, expected hg18 (e.g., %s).",
+        nrow(bad), paste(head(bad$rsid, 3), collapse = ", ")
+      ))
+    }
+
+    return(invisible(NULL))
+  }
+
+  pos_col <- if (build_is_hg38) "pos_hg38" else "pos_hg19"
+  merged <- merge_expected(pos_col, "pos_expected")
+
+  mismatches <- merged$pos_expected != merged$pos
+  if (any(mismatches, na.rm = TRUE)) {
+    bad <- merged[mismatches, ]
+    stop(sprintf(
+      "Genome build check failed: %d validation variants does not match %s location (e.g., %s).",
+      nrow(bad), genome_build, paste(head(bad$rsid, 3), collapse = ", ")
+    ))
+  }
 }
 
 # Function modified from bigsnpr to work with offline chain files
@@ -578,15 +655,21 @@ ref_bed <- bed(paste0(ref_1000g_prefix, ".bed"))
 target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
 target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
 
-# Standardize chromosome labels after QC reload.
+# Standardize chromosome labels after QC reload
 target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
+
+# Verify genome build in target (input) genotype data
+check_genome_build(
+  target_bed_obj = target_bed,
+  genome_build = args$genome_build
+)
 
 temp_QC <- data.frame(stage = "SNP CR>0.95; HWE P>1e-6; MAF>0.01; GENO<0.05; MIND<0.05", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
 Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
 
 summary_table <- rbind(summary_table, temp_QC)
 
-## Assert that all IIDs are unique
+# Assert that all sample IDs are unique
 if (any(duplicated(target_bed$fam$`sample.ID`))) {
   stop("Individual sample IDs should be unique. Exiting...")
 }
