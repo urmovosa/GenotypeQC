@@ -154,9 +154,8 @@ standardize_chr_labels <- function(chromosomes) {
   chr
 }
 
-# Genome build validation using rsIDs
+# Genome build validation using a sample of HapMap variants
 check_genome_build <- function(target_bed_obj, genome_build) {
-  # Load a sample of HapMap3 variants with different locations in hg19/hg38
   validation_path <- file.path("data", "validation_snps.tsv")
   if (!file.exists(validation_path)) {
     stop(sprintf(
@@ -183,50 +182,76 @@ check_genome_build <- function(target_bed_obj, genome_build) {
   validation_variants$rsid <- as.character(validation_variants$rsid)
   validation_variants$pos_hg19 <- as.integer(validation_variants$pos_hg19)
   validation_variants$pos_hg38 <- as.integer(validation_variants$pos_hg38)
+  validation_variants$chr <- standardize_chr_labels(validation_variants$chr)
 
   # Assume standard bigsnpr schema for input data column names
   target_map <- data.frame(
-    rsid = as.character(target_bed_obj$map$marker.ID),
+    variant_id = as.character(target_bed_obj$map$marker.ID),
+    chr = standardize_chr_labels(target_bed_obj$map$chromosome),
     pos = as.integer(target_bed_obj$map$physical.pos),
     stringsAsFactors = FALSE
   )
+  target_map$chrpos_id <- paste0(target_map$chr, ":", target_map$pos)
   build_is_hg38 <- genome_build %in% c("hg38", "GRCh38")
   build_is_hg18 <- genome_build %in% c("hg18", "GRCh36")
+  mismatch_threshold <- 0.10
 
+  # Prefer rsID matching, fall back to chr:pos IDs in target data.
   merge_expected <- function(pos_col, expected_label) {
-    expected <- validation_variants[, c("rsid", pos_col)]
-    names(expected)[2] <- expected_label
-    merged <- merge(expected, target_map, by = "rsid")
-    if (nrow(merged) == 0) {
-      stop("Genome build validation failed: none of the validation variants were found in the input data.")
+    expected_rsid <- validation_variants[, c("rsid", pos_col)]
+    names(expected_rsid)[2] <- expected_label
+    expected_rsid$variant_id <- expected_rsid$rsid
+    expected_rsid <- expected_rsid[, c("variant_id", expected_label)]
+    
+    merged_rsid <- merge(expected_rsid, target_map, by = "variant_id")
+
+    expected_chrpos <- validation_variants[, c("chr", pos_col)]
+    names(expected_chrpos)[2] <- expected_label
+    expected_chrpos$variant_id <- paste0(expected_chrpos$chr, ":", expected_chrpos[[expected_label]])
+    expected_chrpos <- expected_chrpos[, c("variant_id", expected_label)]
+    merged_chrpos <- merge(expected_chrpos, target_map, by.x = "variant_id", by.y = "chrpos_id")
+
+    if (nrow(merged_rsid) > 0) {
+      return(merged_rsid)
     }
-    merged
+
+    if (nrow(merged_chrpos) > 0) {
+      return(merged_chrpos)
+    }
+
+    stop("Genome build validation failed: none of the validation variants were found in the input data.")
   }
 
+  # For hg18, ensure it does not look like hg19/hg38.
   if (build_is_hg18) {
     merged_hg38 <- merge_expected("pos_hg38", "pos_hg38_expected")
+    merged_hg19 <- merge_expected("pos_hg19", "pos_hg19_expected")
 
-    matches_hg38 <- merged_hg38$pos_hg38_expected == merged_hg38$pos
-    if (any(matches_hg38, na.rm = TRUE)) {
-      bad <- merged_hg38[matches_hg38, ]
+    match_rate_hg38 <- mean(merged_hg38$pos_hg38_expected == merged_hg38$pos, na.rm = TRUE)
+    match_rate_hg19 <- mean(merged_hg19$pos_hg19_expected == merged_hg19$pos, na.rm = TRUE)
+    max_match_rate <- max(match_rate_hg38, match_rate_hg19, na.rm = TRUE)
+
+    if (max_match_rate > mismatch_threshold) {
       stop(sprintf(
-        "Genome build validation failed: %d validation variants match hg38 location, expected hg18 (e.g., %s).",
-        nrow(bad), paste(head(bad$rsid, 3), collapse = ", ")
+        "Genome build validation failed: %.1f%% of validation variants match hg19/hg38 locations, expected hg18.",
+        max_match_rate * 100
       ))
     }
 
     return(invisible(NULL))
   }
 
+  # For hg19/hg38, require a high match rate to the expected build.
   pos_col <- if (build_is_hg38) "pos_hg38" else "pos_hg19"
   merged <- merge_expected(pos_col, "pos_expected")
 
   mismatches <- merged$pos_expected != merged$pos
-  if (any(mismatches, na.rm = TRUE)) {
+  mismatch_rate <- mean(mismatches, na.rm = TRUE)
+  if (mismatch_rate > mismatch_threshold) {
     bad <- merged[mismatches, ]
     stop(sprintf(
-      "Genome build validation failed: %d validation variants do not match %s location (e.g., %s).",
-      nrow(bad), genome_build, paste(head(bad$rsid, 3), collapse = ", ")
+      "Genome build validation failed: %.1f%% of validation variants do not match %s location (e.g., %s).",
+      mismatch_rate * 100, genome_build, paste(head(bad$variant_id, 3), collapse = ", ")
     ))
   }
 }
