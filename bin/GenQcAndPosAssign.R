@@ -198,7 +198,7 @@ check_genome_build <- function(target_bed_obj, genome_build) {
     names(expected)[2] <- expected_label
     merged <- merge(expected, target_map, by = "rsid")
     if (nrow(merged) == 0) {
-      stop("Genome build check failed: none of the validation variants were found in the input data.")
+      stop("Genome build validation failed: none of the validation variants were found in the input data.")
     }
     merged
   }
@@ -210,7 +210,7 @@ check_genome_build <- function(target_bed_obj, genome_build) {
     if (any(matches_hg38, na.rm = TRUE)) {
       bad <- merged_hg38[matches_hg38, ]
       stop(sprintf(
-        "Genome build check failed: %d validation variants match hg38 location, expected hg18 (e.g., %s).",
+        "Genome build validation failed: %d validation variants match hg38 location, expected hg18 (e.g., %s).",
         nrow(bad), paste(head(bad$rsid, 3), collapse = ", ")
       ))
     }
@@ -225,7 +225,7 @@ check_genome_build <- function(target_bed_obj, genome_build) {
   if (any(mismatches, na.rm = TRUE)) {
     bad <- merged[mismatches, ]
     stop(sprintf(
-      "Genome build check failed: %d validation variants does not match %s location (e.g., %s).",
+      "Genome build validation failed: %d validation variants do not match %s location (e.g., %s).",
       nrow(bad), genome_build, paste(head(bad$rsid, 3), collapse = ", ")
     ))
   }
@@ -312,6 +312,9 @@ option_list <- list(
     make_option(c("-d", "--SD_threshold"), default = 0.4,
     help = paste0("Numeric threshold to declare samples outliers, based on the genotype PCs. ", 
                   "Defaults to 0.4 but should always be visually checked and changed, if needed.")),
+    make_option(c("--king_threshold"), default = 2^-4.5,
+    help = paste0("KING kinship threshold for close relatives removal. ",
+            "Default 2^-4.5 removes third-degree or closer relatives.")),
     make_option(c("-i", "--inclusion_list"), type = "character",
     help = "Path to the file with sample IDs to include."),
     make_option(c("-e", "--exclusion_list"), type = "character",
@@ -347,14 +350,15 @@ print(args$pruned_variants_sex_check)
 print(args$output)
 print(args$S_threshold)
 print(args$SD_threshold)
+print(args$king_threshold)
 print(args$exclusion_list)
 print(args$liftover_path)
 print(args$plink_executable)
 print(args$plink2_executable)
 print(args$chain_path)
 
-if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold)) {
-  message("Some of the QC thresholds is not numeric!")
+if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numeric(args$king_threshold)) {
+  message("Some of the QC thresholds are not numeric!")
   stop()
 }
 
@@ -1076,7 +1080,7 @@ message("Find related samples.")
 related <- snp_plinkKINGQC(
   plink2.path = PLINK2,
   bedfile.in = paste0(bed_simplepath, "_QC.bed"),
-  thr.king = 2^-4.5,
+  thr.king = args$king_threshold,
   make.bed = FALSE,
   ncores = 4,
   extra.options = paste0("--remove ", het_failed_samples_out_path)
@@ -1169,7 +1173,7 @@ if (length(related_individuals) > 0) {
   indices_of_passed_samples <- indices_of_het_passed_samples
 }
 
-temp_QC <- data.frame(stage = "Relatedness for eQTL samples: thr. KING>2^-4.5", Nr_of_SNPs = target_bed$ncol,
+temp_QC <- data.frame(stage = paste0("Relatedness for eQTL samples: thr. KING>", args$king_threshold), Nr_of_SNPs = target_bed$ncol,
   Nr_of_samples = length(indices_of_passed_samples),
   Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% het_s[!het_s$ID %in% samples_to_remove_due_to_relatedness, ]$ID, ])
 )
