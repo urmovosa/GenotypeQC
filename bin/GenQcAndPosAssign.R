@@ -154,7 +154,7 @@ standardize_chr_labels <- function(chromosomes) {
   chr
 }
 
-# Sanity check genome build using validation rsIDs
+# Genome build validation using rsIDs
 check_genome_build <- function(target_bed_obj, genome_build) {
   # Load a sample of HapMap3 variants with different locations in hg19/hg38
   validation_path <- file.path("data", "validation_snps.tsv")
@@ -869,6 +869,26 @@ print(indices_of_het_passed_samples)
 
 fwrite(het_fail_samples, het_failed_samples_out_path, sep = "\t", quote = FALSE, row.names = FALSE)
 
+if (length(indices_of_het_failed_samples) > 0) {
+  # Remove heterozygosity-failed samples from the QC bed for downstream checks.
+  system(paste0(
+    PLINK2, " --bfile ", bed_simplepath, "_QC",
+    " --remove ", het_failed_samples_out_path,
+    " --make-bed --out ", bed_simplepath, "_QC_HET",
+    " --threads 4 --output-chr 26"
+  ))
+
+  system(paste0("rm ", bed_simplepath, "_QC.*"))
+  system(paste0("mv ", bed_simplepath, "_QC_HET.bed ", bed_simplepath, "_QC.bed"))
+  system(paste0("mv ", bed_simplepath, "_QC_HET.bim ", bed_simplepath, "_QC.bim"))
+  system(paste0("mv ", bed_simplepath, "_QC_HET.fam ", bed_simplepath, "_QC.fam"))
+
+  target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
+  target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
+  target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
+  indices_of_het_passed_samples <- rows_along(target_bed)
+}
+
 het_s <- data.frame(ID = target_bed$.fam$`sample.ID`, FAMID = target_bed$.fam$`family.ID`)
 het_s <- het_s[!het_s$ID %in% het_fail_samples$IID, ]
 
@@ -1171,6 +1191,37 @@ if (length(related_individuals) > 0) {
 } else {
   # No relatedness observed, proceeding with all samples that passed the previous check.
   indices_of_passed_samples <- indices_of_het_passed_samples
+}
+
+if (length(samples_to_remove_due_to_relatedness) > 0) {
+  # Remove relatedness-failed samples from the QC bed before PCA/outlier checks.
+  related_failed_samples_out_path <- paste0(args$output, "/gen_data_QCd/RelatednessFailed.txt")
+  fwrite(
+    data.table::data.table(FID = "0", IID = samples_to_remove_due_to_relatedness),
+    related_failed_samples_out_path,
+    sep = "\t",
+    quote = FALSE,
+    col.names = TRUE,
+    row.names = FALSE
+  )
+
+  system(paste0(
+    PLINK2, " --bfile ", bed_simplepath, "_QC",
+    " --remove ", related_failed_samples_out_path,
+    " --make-bed --out ", bed_simplepath, "_QC_REL",
+    " --threads 4 --output-chr 26"
+  ))
+
+  system(paste0("rm ", bed_simplepath, "_QC.*"))
+  system(paste0("mv ", bed_simplepath, "_QC_REL.bed ", bed_simplepath, "_QC.bed"))
+  system(paste0("mv ", bed_simplepath, "_QC_REL.bim ", bed_simplepath, "_QC.bim"))
+  system(paste0("mv ", bed_simplepath, "_QC_REL.fam ", bed_simplepath, "_QC.fam"))
+
+  target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
+  target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
+  target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
+  indices_of_het_passed_samples <- rows_along(target_bed)
+  indices_of_passed_samples <- rows_along(target_bed)
 }
 
 temp_QC <- data.frame(stage = paste0("Relatedness for eQTL samples: thr. KING>", args$king_threshold), Nr_of_SNPs = target_bed$ncol,
