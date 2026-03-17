@@ -289,6 +289,11 @@ workflow {
 
     FILTERFINALVCF(vcf_filter_input_ch)
 
+    filter_vcf_output_files_ch = FILTERFINALVCF.out
+    .map { it.flatten() }
+    .collect()
+    .map { it.flatten() }
+
     report_input_ch = GENOTYPEQC.out[0]
     .combine(GENOTYPEQC.out[1])
     .combine(GENOTYPEQC.out[2])
@@ -298,6 +303,7 @@ workflow {
     .combine(GenSdThresh_ch)
     .combine(report_ch)
     .combine(AdditionalCovariates_ch)
+    .combine(filter_vcf_output_files_ch)
 
     report_input_ch.view()
 

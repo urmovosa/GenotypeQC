@@ -96,7 +96,7 @@ process RenderReport {
     publishDir "${params.outputDir}", mode: 'copy', overwrite: true
 
     input:
-      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), path(additional_covariates)
+      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), path(additional_covariates), path(vcf_filter_outputs)
 
     output:
       path ('outputfolder_gen/')
@@ -105,6 +105,10 @@ process RenderReport {
 
     script:
     """
+    # Stage VCF filtering output files for the report
+    mkdir -p outputfolder_gen/gen_data_summary/vcf_filtering
+    cp -L ${vcf_filter_outputs} outputfolder_gen/gen_data_summary/vcf_filtering/
+
     # Make combined covariate file
     Rscript --vanilla $baseDir/bin/MakeCovariateFile.R ${sexcheck} "${additional_covariates}"
 
@@ -126,12 +130,13 @@ process RenderReport {
 process FilterFinalVcf {
 
     container 'quay.io/eqtlgen/eqtlgenimpute:v0.2'
+  publishDir "${params.outputDir}/vcf_filtering", mode: 'copy', overwrite: true
 
     input:
       tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(imputation_th), val(info_field)
 
     output:
-      path("*_filtered.vcf.gz")
+      tuple path("*_filtered.vcf.gz"), path("*_filtered.vcf.gz.csi"), path("*_prefilter.stats.txt"), path("*_filtered.stats.txt"), path("*_prefilter.variant_metrics.tsv"), path("*_filtered.variant_metrics.tsv")
 
     script:
     """
