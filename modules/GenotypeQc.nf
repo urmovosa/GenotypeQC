@@ -138,24 +138,45 @@ process FilterFinalVcf {
     chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
     zcat ${snplist} | cut -f1 | tail -n +2 > hapmap3_snplist.txt
 
-    awk 'NR>1 {print \$2}' ${filtered_fam} > iids.txt
+    awk '{print \$2}' ${filtered_fam} | sort -u > iids.txt
 
-    # MAF and INFO fields can vary in vcf.gz
-    # TODO: 
-    # filter first by samples
-    # Then recalculate MAF, HWE and imputation quality score
-    # Then calculate per-chr statistics
-    # Then report per-snp maf, hwe and imputation summaries
-    # Then apply SNP filters
-    # Then delete interim files
-    # Then calculate per-chr statistics
+    # 1) Filter by HapMap3 variants and QC-passed samples.
     bcftools view \
     -S iids.txt \
-    -i "MAF>=${maf} && INFO/${info_field}>=${imputation_th}" \
-    -Oz -o \${chr}_filtered.vcf.gz \
+    -T hapmap3_snplist.txt \
+    -Ob -o \${chr}_subset.bcf \
     ${vcf}
 
+    # 2) Recalculate INFO tags (MAF, WHE, imputation quality score).
+    bcftools +fill-tags \
+    \${chr}_subset.bcf \
+    -Ob -o \${chr}_subset.filled.bcf \
+    -- -t AC,AN,AF,MAF,HWE
+
+    # 3) Report variant stats (MAF, HWE, imputation quality) before filtering.
+    bcftools stats \${chr}_subset.filled.bcf > \${chr}_prefilter.stats.txt
+    printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\n" "${info_field}" > \${chr}_prefilter.variant_metrics.tsv
+    bcftools query \
+    -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\n" \
+    \${chr}_subset.filled.bcf >> \${chr}_prefilter.variant_metrics.tsv
+
+    # 4) Apply filters (MAF and imputation quality thresholds).
+    bcftools view \
+    -i "INFO/MAF>=${maf} && INFO/${info_field}>=${imputation_th}" \
+    -Oz -o \${chr}_filtered.vcf.gz \
+    \${chr}_subset.filled.bcf
+
     bcftools index \${chr}_filtered.vcf.gz
+
+    # 5) Report post-filtering variant stats.
+    bcftools stats \${chr}_filtered.vcf.gz > \${chr}_filtered.stats.txt
+    printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\n" "${info_field}" > \${chr}_filtered.variant_metrics.tsv
+    bcftools query \
+    -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\n" \
+    \${chr}_filtered.vcf.gz >> \${chr}_filtered.variant_metrics.tsv
+
+    # 6) Cleanup interim files.
+    rm -f \${chr}_subset.bcf \${chr}_subset.bcf.csi \${chr}_subset.filled.bcf \${chr}_subset.filled.bcf.csi
 
     """
 
