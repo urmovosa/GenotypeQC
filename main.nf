@@ -40,6 +40,7 @@ def helpMessage() {
       --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet. Use this setting when you have to work offline and your build is hg38.
+      --maf_threshold               MAF threshold for final VCF filtering (default: 0.01).
       --imputation_info_field       INFO sub-field code that stores imputation quality (default: R2).
 
     """.stripIndent()
@@ -148,7 +149,7 @@ params.outputDir = 'results'
 params.genome_build = 'hg19'
 params.gen_qc_steps = "Array"
 
-params.maf_threshold = 0.01
+params.maf_threshold = params.maf_threshold ?: 0.01
 params.imputation_quality_threshold = 0.8
 params.imputation_info_field = 'R2'
 
