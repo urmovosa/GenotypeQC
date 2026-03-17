@@ -41,6 +41,7 @@ def helpMessage() {
       --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet. Use this setting when you have to work offline and your build is hg38.
       --maf_threshold               MAF threshold for final VCF filtering (default: 0.01).
+      --imputation_quality_threshold Minimum imputation quality threshold for final VCF filtering (default: 0.8).
       --imputation_info_field       INFO sub-field code that stores imputation quality (default: R2).
 
     """.stripIndent()
@@ -150,8 +151,8 @@ params.genome_build = 'hg19'
 params.gen_qc_steps = "Array"
 
 params.maf_threshold = params.maf_threshold ?: 0.01
-params.imputation_quality_threshold = 0.8
-params.imputation_info_field = 'R2'
+params.imputation_quality_threshold = params.imputation_quality_threshold ?: 0.8
+params.imputation_info_field = params.imputation_info_field ?: 'R2'
 
 // By default define random non-colliding file names in data folder. If default, these are ignored by corresponding script.
 params.InclusionList = "$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt"
