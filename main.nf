@@ -40,6 +40,7 @@ def helpMessage() {
       --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet. Use this setting when you have to work offline and your build is hg38.
+      --hwe_threshold               HWE p-value threshold for SNP QC steps in genotype QC (default: 1e-6).
       --maf_threshold               MAF threshold for final VCF filtering (default: 0.01).
       --imputation_quality_threshold Minimum imputation quality threshold for final VCF filtering (default: 0.8).
       --imputation_info_field       INFO sub-field code that stores imputation quality (default: R2).
@@ -150,6 +151,7 @@ params.outputDir = 'results'
 params.genome_build = 'hg19'
 params.gen_qc_steps = "Array"
 
+params.hwe_threshold = params.hwe_threshold ?: 1e-6
 params.maf_threshold = params.maf_threshold ?: 0.01
 params.imputation_quality_threshold = params.imputation_quality_threshold ?: 0.8
 params.imputation_info_field = params.imputation_info_field ?: 'R2'
@@ -165,6 +167,7 @@ cohort_name_ch = Channel.value(params.cohort_name)
 genome_build_ch = Channel.value(params.genome_build)
 
 maf_ch = Channel.value(params.maf_threshold)
+hwe_ch = Channel.value(params.hwe_threshold)
 imputation_quality_ch = Channel.value(params.imputation_quality_threshold)
 imputation_info_field_ch = Channel.value(params.imputation_info_field)
 
@@ -192,6 +195,7 @@ summary['PLINK bfile']              = params.bfile
 summary['Gen QC steps']             = params.gen_qc_steps
 summary['Genome Build']             = params.genome_build
 summary['MAF filter']               = params.maf_threshold
+summary['HWE threshold']            = params.hwe_threshold
 summary['Imputation filter']        = params.imputation_quality_threshold
 summary['Imputation INFO code']     = params.imputation_info_field
 summary['S threshold']              = params.GenOutThresh
@@ -267,6 +271,7 @@ workflow {
   genotypeqc_input_ch = MERGEBED.out
       .combine(GenOutThresh_ch)
       .combine(GenSdThresh_ch)
+      .combine(hwe_ch)
       .combine(ExclusionList_ch)
       .combine(InclusionList_ch)
       .combine(genome_build_ch)

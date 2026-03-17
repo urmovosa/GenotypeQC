@@ -337,6 +337,9 @@ option_list <- list(
     make_option(c("-d", "--SD_threshold"), default = 0.4,
     help = paste0("Numeric threshold to declare samples outliers, based on the genotype PCs. ", 
                   "Defaults to 0.4 but should always be visually checked and changed, if needed.")),
+    make_option(c("--hwe_threshold"), default = 1e-6,
+    help = paste0("HWE p-value threshold for SNP QC filters. ",
+            "Default 1e-6.")),
     make_option(c("--king_threshold"), default = 2^-4.5,
     help = paste0("KING kinship threshold for close relatives removal. ",
             "Default 2^-4.5 removes third-degree or closer relatives.")),
@@ -375,6 +378,7 @@ print(args$pruned_variants_sex_check)
 print(args$output)
 print(args$S_threshold)
 print(args$SD_threshold)
+print(args$hwe_threshold)
 print(args$king_threshold)
 print(args$exclusion_list)
 print(args$liftover_path)
@@ -382,7 +386,7 @@ print(args$plink_executable)
 print(args$plink2_executable)
 print(args$chain_path)
 
-if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numeric(args$king_threshold)) {
+if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numeric(args$hwe_threshold) || !is.numeric(args$king_threshold)) {
   message("Some of the QC thresholds are not numeric!")
   stop()
 }
@@ -665,7 +669,7 @@ snp_plinkQC(
   maf = 0.01,
   geno = 0.05,
   mind = 0.05,
-  hwe = 1e-6,
+  hwe = args$hwe_threshold,
   autosome.only = FALSE,
   extra.options = paste0("--output-chr 26 --not-chr 0 25-26 --set-all-var-ids ", variant_format, " --new-id-max-allele-len 10 truncate --threads 4"),
   verbose = TRUE
@@ -693,7 +697,7 @@ check_genome_build(
   genome_build = args$genome_build
 )
 
-temp_QC <- data.frame(stage = "SNP CR>0.95; HWE P>1e-6; MAF>0.01; GENO<0.05; MIND<0.05", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
+temp_QC <- data.frame(stage = paste0("SNP CR>0.95; HWE P>", args$hwe_threshold, "; MAF>0.01; GENO<0.05; MIND<0.05"), Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
 Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
 
 summary_table <- rbind(summary_table, temp_QC)
@@ -843,7 +847,7 @@ snp_plinkQC(
   maf = 0.01,
   geno = 0.05,
   mind = 0.05,
-  hwe = 1e-6,
+  hwe = args$hwe_threshold,
   autosome.only = TRUE,
   extra.options = paste0("--output-chr 26 --remove ", sex_check_removed_out_path, " --threads 4"),
   verbose = TRUE
@@ -1364,7 +1368,7 @@ snp_plinkQC(
   maf = 0.01,
   geno = 0.05,
   mind = 0.05,
-  hwe = 1e-6,
+  hwe = args$hwe_threshold,
   autosome.only = TRUE,
   extra.options = "--output-chr 26 --threads 4",
   verbose = TRUE
