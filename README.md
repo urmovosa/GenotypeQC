@@ -1,6 +1,6 @@
 # CVDLINK genotype QC pipeline
 
-Automatic data quality check and processing for imputed genotype data in .vcf format.
+Automatic data quality check and processing for genotype data in .vcf format (or PLINK bed/bim/fam input).
 
 Performs the following main steps:
 
@@ -27,7 +27,8 @@ Performs the following main steps:
 - Have access to HPC or workstation (preferably with multiple cores).
 - Have Bash >=3.2 installed.
 - Have Java >=17 installed.
-- HPC has Singularity installed and running.
+- Have Nextflow installed.
+- Have either Singularity/Apptainer or Docker available for containerized runs.
 
 ### Setup of the pipeline
 
@@ -39,7 +40,7 @@ Or just download this from the gitlab/github download link and unzip.
 
 ### Input files
 
-- Per-chromosome genotype files in `.vcf` format. Genome build has to be in **hg19/GRCh37 (default)** or **hg38/GRCh38**. Pathname extension using globbing is allowed (using `*` or `?`), but the path should be provided without pathway extension.
+- Per-chromosome genotype files in `.vcf` format (or PLINK bed/bim/fam prefix via `--bfile`). Genome build has to be in **hg18/GRCh36**, **hg19/GRCh37 (default)** or **hg38/GRCh38**. Pathname extension using globbing is allowed (using `*` or `?`), but the path should be provided without pathway extension.
 - It is advisable to supply a `.fam` file that also includes observed sex for all samples (format: males=1, females=2), so the pipeline does an extra check on that. However, if this information is not available for all samples, the pipeline skips this check.
 - Genotype-to-phenotype linking file (gtp). Tab-delimited file, no header, 2 columns: sample ID in genotype data, corresponding sample ID in gene expression data.
 
@@ -51,13 +52,13 @@ Or just download this from the gitlab/github download link and unzip.
 
 `--bfile`                       Path prefix to unimputed genotype files in PLINK bed/bim/fam format (without extensions). Required if `--vcf` is not provided.
 
-`--genome_build`                Genome build of the cohort. Either hg19, GRCh37, hg38 or GRCh38. Defaults to hg19.
+`--genome_build`                Genome build of the cohort. Either hg18, GRCh36, hg19, GRCh37, hg38 or GRCh38. Defaults to hg19.
 
 `--gtp`                         Genotype-to-expression linking file. Tab-delimited, no header. First column: sample ID for genotype data. Second column: corresponding sample ID for gene expression data. Can be used to filter samples from the analysis.
 
 `--snpfilter`                   Gzipped file with HapMap3 variants.
 
-`--output_dir`                  Path to the output directory.
+`--output_dir`                  Path to the output directory. Defaults to `results`.
     
 ### Additional settings
 
@@ -76,8 +77,6 @@ There are some arguments which can be used to adjust certain outlier detection t
 `--vcf_hwe` HWE p-value threshold for final VCF filtering (default `1e-6`).
 
 `--vcf_imp` Minimum imputation quality threshold for final VCF filtering (default `0.8`).
-
-`--gen_qc_steps` Either `Array` (default) or `WGS` (generic + WGS QC; only valid with VCF datasets).
 
 Optional arguments:
 
@@ -105,6 +104,8 @@ See the offline usage instructions and helper script:
 
 - [docs/OFFLINE.md](docs/OFFLINE.md)
 - [scripts/offline_fetch.sh](scripts/offline_fetch.sh)
+
+Note: for offline runs, provide local paths for `--plink_executable`, `--plink2_executable`, `--reference_1000g_folder`, and `--chain_path` when needed.
 
 ### Running the data QC command
 
@@ -234,10 +235,17 @@ Pipeline makes the following output (most relevant files outlined):
         |--gen_data_summary
             |--...
     |--pipeline_info
-        |--DataQc_report.html
+      |--Cvdlink_GenotypeQc_report.html
         |--...
     |--Report_DataQc_[cohort name].html
-    |--CovariatesPCs.txt
+    |--CovariatePCs.txt
+    |--vcf_filtering
+      |--chr*_filtered.vcf.gz
+      |--chr*_filtered.vcf.gz.csi
+      |--chr*_prefilter.stats.txt
+      |--chr*_filtered.stats.txt
+      |--chr*_prefilter.variant_metrics.tsv
+      |--chr*_filtered.variant_metrics.tsv
   |--pipeline_info
     |--...
 ```

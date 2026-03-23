@@ -29,7 +29,6 @@ def helpMessage() {
       --output_dir                  Path to the output directory.
       --qc_out_s                    "Outlierness" score threshold for excluding ethnic outliers. Defaults to 0.4 but it should be adjusted according to visual inspection.
       --qc_out_sd                   Threshold for declaring samples outliers based on genetic PC1 and PC2 SD from mean. Defaults to 3 and should be adjusted according to visual inspection.
-      --gen_qc_steps                Either generic, array-based, QC or including also WGS specific QC (only valid with VCF datasets). 'Array' (default) or 'WGS' (Generic + WGS qc).
 
     Optional arguments
       --inclusion_list              File with sample IDs to restrict to the analysis. Useful for keeping in the inclusion list of the samples. By default, all samples are kept.
@@ -56,7 +55,6 @@ params.report_template = params.report_template ?: "$baseDir/bin/Report_template
 
 // Define set of accepted genome builds:
 def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh38']
-def genotyping_platforms_accepted = ['Array', 'WGS']
 
 params.vcf = params.vcf ?: ''
 params.bfile = params.bfile ?: ''
@@ -151,7 +149,6 @@ params.qc_out_sd = params.qc_out_sd ?: 3
 params.cohort_name = params.cohort_name ?: ''
 params.output_dir = params.output_dir ?: 'results'
 params.genome_build = params.genome_build ?: 'hg19'
-params.gen_qc_steps = params.gen_qc_steps ?: "Array"
 
 params.qc_hwe = params.qc_hwe ?: 1e-6
 params.qc_maf = params.qc_maf ?: 0.01
@@ -181,10 +178,6 @@ inclusion_list_ch = Channel.fromPath(params.inclusion_list, checkIfExists:true)
 exclusion_list_ch = Channel.fromPath(params.exclusion_list, checkIfExists:true)
 additional_covariates_ch = Channel.fromPath(params.additional_covariates, checkIfExists:true)
 
-if ((params.gen_qc_steps in genotyping_platforms_accepted) == false) {
-  exit 1, "[Pipeline error] Genotype QC steps $params.gen_qc_steps not one of: $genotyping_platforms_accepted \n"
-}
-
 if ((params.genome_build in genome_builds_accepted) == false) {
   exit 1, "[Pipeline error] Genome build $params.genome_build not in accepted genome builds: $genome_builds_accepted \n"
 }
@@ -198,7 +191,6 @@ def summary = [:]
 summary['Pipeline Name']            = 'GenotypeDataQC'
 summary['Pipeline Version']         = workflow.manifest.version
 summary['PLINK bfile']              = params.bfile
-summary['Gen QC steps']             = params.gen_qc_steps
 summary['Genome Build']             = params.genome_build
 summary['QC HWE threshold']         = params.qc_hwe
 summary['QC MAF threshold']         = params.qc_maf
