@@ -27,7 +27,7 @@ ${plink2_executable} \
 process GenotypeQC {
 
     input:
-  tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), path(ExclusionList), \
+  tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), path(ExclusionList), \
       path(InclusionList), val(genome_build), path(genotype_phenotype), path(snplist), file(plink2_executable)
       file(fam_annot)
       file(plink_executable)
@@ -62,6 +62,7 @@ process GenotypeQC {
     --S_threshold ${s_stat} \
     --SD_threshold ${sd_thresh} \
     --hwe_threshold ${hwe_threshold} \
+    --qc_maf_threshold ${qc_maf_threshold} \
     --gen_phe ${genotype_phenotype} \
     --inclusion_list "${InclusionList}" \
     --exclusion_list "${ExclusionList}" \

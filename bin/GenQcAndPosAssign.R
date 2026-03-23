@@ -340,6 +340,9 @@ option_list <- list(
     make_option(c("--hwe_threshold"), default = 1e-6,
     help = paste0("HWE p-value threshold for SNP QC filters. ",
             "Default 1e-6.")),
+        make_option(c("--qc_maf_threshold"), default = 0.01,
+        help = paste0("MAF threshold for PLINK SNP QC filters. ",
+          "Default 0.01.")),
     make_option(c("--king_threshold"), default = 2^-4.5,
     help = paste0("KING kinship threshold for close relatives removal. ",
             "Default 2^-4.5 removes third-degree or closer relatives.")),
@@ -379,6 +382,7 @@ print(args$output)
 print(args$S_threshold)
 print(args$SD_threshold)
 print(args$hwe_threshold)
+print(args$qc_maf_threshold)
 print(args$king_threshold)
 print(args$exclusion_list)
 print(args$liftover_path)
@@ -386,7 +390,7 @@ print(args$plink_executable)
 print(args$plink2_executable)
 print(args$chain_path)
 
-if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numeric(args$hwe_threshold) || !is.numeric(args$king_threshold)) {
+if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numeric(args$hwe_threshold) || !is.numeric(args$qc_maf_threshold) || !is.numeric(args$king_threshold)) {
   message("Some of the QC thresholds are not numeric!")
   stop()
 }
@@ -666,7 +670,7 @@ snp_plinkQC(
   prefix.in = paste0(bed_simplepath, "_filtered"),
   prefix.out = paste0(bed_simplepath, "_QC"),
   file.type = "--bfile",
-  maf = 0.01,
+  maf = args$qc_maf_threshold,
   geno = 0.05,
   mind = 0.05,
   hwe = args$hwe_threshold,
@@ -697,7 +701,7 @@ check_genome_build(
   genome_build = args$genome_build
 )
 
-temp_QC <- data.frame(stage = paste0("SNP CR>0.95; HWE P>", args$hwe_threshold, "; MAF>0.01; GENO<0.05; MIND<0.05"), Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
+temp_QC <- data.frame(stage = paste0("SNP CR>0.95; HWE P>", args$hwe_threshold, "; MAF>", args$qc_maf_threshold, "; GENO<0.05; MIND<0.05"), Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
 Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
 
 summary_table <- rbind(summary_table, temp_QC)
@@ -844,7 +848,7 @@ snp_plinkQC(
   prefix.in = paste0(bed_simplepath, "_QC"),
   prefix.out = paste0(bed_simplepath, "_QC", "_QC"),
   file.type = "--bfile",
-  maf = 0.01,
+  maf = args$qc_maf_threshold,
   geno = 0.05,
   mind = 0.05,
   hwe = args$hwe_threshold,
@@ -1365,7 +1369,7 @@ snp_plinkQC(
   prefix.in = paste0(args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation_temp"),
   prefix.out = paste0(args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation"),
   file.type = "--bfile",
-  maf = 0.01,
+  maf = args$qc_maf_threshold,
   geno = 0.05,
   mind = 0.05,
   hwe = args$hwe_threshold,
