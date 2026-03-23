@@ -57,25 +57,35 @@ Or just download this from the gitlab/github download link and unzip.
 
 `--snpfilter`                   Gzipped file with HapMap3 variants.
 
-`--outputDir`                   Path to the output directory.
+`--output_dir`                  Path to the output directory.
     
 ### Additional settings
 
 There are some arguments which can be used to adjust certain outlier detection thresholds. These should be adjusted after initial run with the default settings and after investigating the diagnostic plots in the `Report_DataQc_[cohort name].html`. Then the pipeline should be re-run with adjusted settings.
 
-`--GenOutThresh` Threshold for declaring genotype sample genetic outlier, based on LOF "outlierness" metric. Default is 0.4.
+`--qc_out_s` Threshold for declaring genotype sample genetic outlier, based on LOF "outlierness" metric. Default is 0.4.
 
-`--GenSdThresh` Threshold for declaring genotype sample genetic outlier, based on the deviation from the means of first two genetic PCs. Defaults to 3 SD from the mean.
+`--qc_out_sd` Threshold for declaring genotype sample genetic outlier, based on the deviation from the means of first two genetic PCs. Defaults to 3 SD from the mean.
+
+`--qc_hwe` HWE p-value threshold for genotype QC filtering (default `1e-6`).
+
+`--qc_maf` MAF threshold for genotype QC filtering (default `0.01`).
+
+`--vcf_maf` MAF threshold for final VCF filtering (default `0.01`).
+
+`--vcf_hwe` HWE p-value threshold for final VCF filtering (default `1e-6`).
+
+`--vcf_imp` Minimum imputation quality threshold for final VCF filtering (default `0.8`).
 
 `--gen_qc_steps` Either `Array` (default) or `WGS` (generic + WGS QC; only valid with VCF datasets).
 
 Optional arguments:
 
-`--AdditionalCovariates` Tab-separated file with additional external covariates deemed to be relevant for eQTL mapping in given dataset. First column must have header "SampleID" and following columns must include corresponding covariates with informative headers (E.g. "GenotypeBatch", etc.). Categorical covariates must be specified in the text format (E.g. "Batch1", "Batch2", "Batch3"), not encoded as numbers. Pipeline does one-hot encoding for you. Numerical covariates are allowed as well. If specified, this file should include covariate information for each eQTL sample which passes QC and NAs are not allowed. 
+`--additional_covariates` Tab-separated file with additional external covariates deemed to be relevant for eQTL mapping in given dataset. First column must have header "SampleID" and following columns must include corresponding covariates with informative headers (E.g. "GenotypeBatch", etc.). Categorical covariates must be specified in the text format (E.g. "Batch1", "Batch2", "Batch3"), not encoded as numbers. Pipeline does one-hot encoding for you. Numerical covariates are allowed as well. If specified, this file should include covariate information for each eQTL sample which passes QC and NAs are not allowed. 
 
-`--InclusionList` File with the genotype IDs to keep in the analysis (one per row). Useful for e.g. keeping in only the samples which have part of the biobank, etc. By default, pipeline keeps all samples in. No header needed.
+`--inclusion_list` File with the genotype IDs to keep in the analysis (one per row). Useful for e.g. keeping in only the samples which have part of the biobank, etc. By default, pipeline keeps all samples in. No header needed.
 
-`--ExclusionList` File with the genotype IDs to remove from the analysis (one per row). Useful for removing part of the samples from the analysis if these are from different ancestry. In case of the overlap between inclusion list and exclusion list, intersect is kept in the analysis. No header needed.
+`--exclusion_list` File with the genotype IDs to remove from the analysis (one per row). Useful for removing part of the samples from the analysis if these are from different ancestry. In case of the overlap between inclusion list and exclusion list, intersect is kept in the analysis. No header needed.
 
 `--fam` PLINK .fam file. Useful for specifying known sex of the samples.
 
@@ -87,7 +97,7 @@ Optional arguments:
 
 `--chain_path` Path to folder containing hg19ToHg38 and hg38ToHg19 chain files (only needed for hg38/GRCh38).
 
-`--imputation_info_field` INFO sub-field that stores the imputation quality metric (default `R2`).
+`--vcf_imp_field` INFO sub-field that stores the imputation quality metric (default `R2`).
 
 ### Offline / isolated run
 
@@ -144,17 +154,22 @@ output_path=../output # Output path
 
 # Additional settings and optional arguments for the command
 
-# --GenOutThresh [numeric threshold]
-# --GenSdThresh [numeric threshold]
-# --InclusionList [file with the list of samples to restrict the analysis]
-# --ExclusionList [file with the list of samples to remove from the analysis]
-# --AdditionalCovariates [file with additional covariates. First column should be `SampleID`]
+# --qc_out_s [numeric threshold]
+# --qc_out_sd [numeric threshold]
+# --qc_hwe [HWE p-value threshold for genotype QC]
+# --qc_maf [MAF threshold for genotype QC]
+# --vcf_maf [MAF threshold for final VCF filtering]
+# --vcf_hwe [HWE p-value threshold for final VCF filtering]
+# --vcf_imp [minimum imputation quality for final VCF filtering]
+# --inclusion_list [file with the list of samples to restrict the analysis]
+# --exclusion_list [file with the list of samples to remove from the analysis]
+# --additional_covariates [file with additional covariates. First column should be `SampleID`]
 # --fam [PLINK .fam file.]
 # --plink_executable [path to plink executable (PLINK v1.90b6.26 64-bit)]
 # --plink2_executable [path to plink2 executable (PLINK v2.00a3.7LM 64-bit Intel)]
 # --reference_1000g_folder [path to folder with 1000G reference data]
 # --chain_path [folder with hg19->hg38 and hg38->hg19 chain files]
-# --imputation_info_field [INFO sub-field storing imputation quality metric (default R2)]
+# --vcf_imp_field [INFO sub-field storing imputation quality metric (default R2)]
 
 # Command:
 NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \
@@ -163,7 +178,7 @@ NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \
 --cohort_name ${cohort_name} \
 --genome_build ${genome_build} \
 --gtp ${gtp} \
---outputDir ${output_path}  \
+--output_dir ${output_path}  \
 --plink2_executable /gpfs/space/GI/GV/Projects/eQTLGenPhase2/temp_fix_offline_files/input/eQTLGenP2OfflineFiles/1_DataQC_additional_files/plink_executables/plink2 \
 -profile slurm,singularity \
 -resume
