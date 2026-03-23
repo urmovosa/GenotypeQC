@@ -95,7 +95,7 @@ process MergeBed {
 
 process RenderReport {
 
-    publishDir "${params.outputDir}", mode: 'copy', overwrite: true
+  publishDir "${params.output_dir}", mode: 'copy', overwrite: true
 
     input:
       tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), path(additional_covariates), path(vcf_filter_outputs)
@@ -132,10 +132,10 @@ process RenderReport {
 process FilterFinalVcf {
 
     container 'quay.io/eqtlgen/eqtlgenimpute:v0.2'
-  publishDir "${params.outputDir}/vcf_filtering", mode: 'copy', overwrite: true
+  publishDir "${params.output_dir}/vcf_filtering", mode: 'copy', overwrite: true
 
     input:
-      tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(imputation_th), val(info_field)
+      tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(vcf_hwe_threshold), val(imputation_th), val(info_field)
 
     output:
       tuple path("*_filtered.vcf.gz"), path("*_filtered.vcf.gz.csi"), path("*_prefilter.stats.txt"), path("*_filtered.stats.txt"), path("*_prefilter.variant_metrics.tsv"), path("*_filtered.variant_metrics.tsv")
@@ -167,9 +167,9 @@ process FilterFinalVcf {
     -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\n" \
     \${chr}_subset.filled.bcf >> \${chr}_prefilter.variant_metrics.tsv
 
-    # 4) Apply filters (MAF and imputation quality thresholds).
+    # 4) Apply filters (MAF, HWE and imputation quality thresholds).
     bcftools view \
-    -i "INFO/MAF>=${maf} && INFO/${info_field}>=${imputation_th}" \
+    -i "INFO/MAF>=${maf} && INFO/HWE>=${vcf_hwe_threshold} && INFO/${info_field}>=${imputation_th}" \
     -Oz -o \${chr}_filtered.vcf.gz \
     \${chr}_subset.filled.bcf
 

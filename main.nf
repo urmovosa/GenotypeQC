@@ -14,7 +14,7 @@ def helpMessage() {
         --gtp gte_EstBB_HT12v3.txt\
         --cohort_name EstBB_HT12v3\
         --genome_build GRCh37
-        --outdir EstBB_HT12v3_GenoQc\
+        --output_dir EstBB_HT12v3_GenoQc\
         -profile slurm\
         -resume
 
@@ -26,46 +26,47 @@ def helpMessage() {
       --fam                         Path to a plink fam file. This is especially helpful for sex annotation of samples in VCF files.
       --snpfilter                   Gzipped file with HapMap3 variants.
       --gtp                         Genotype file. Tab-delimited, no header. First column: sample ID for genotype data. Can be used to filter samples from the analysis.
-      --outputDir                   Path to the output directory.
-      --GenOutThresh                "Outlierness" score threshold for excluding ethnic outliers. Defaults to 0.4 but it should be adjusted according to visual inspection.
-      --GenSdThresh                 Threshold for declaring samples outliers based on genetic PC1 and PC2. Defaults to 3 SD from the mean of PC1 and PC2 but should be adjusted according to visual inspection.
+      --output_dir                  Path to the output directory.
+      --qc_out_s                    "Outlierness" score threshold for excluding ethnic outliers. Defaults to 0.4 but it should be adjusted according to visual inspection.
+      --qc_out_sd                   Threshold for declaring samples outliers based on genetic PC1 and PC2 SD from mean. Defaults to 3 and should be adjusted according to visual inspection.
       --gen_qc_steps                Either generic, array-based, QC or including also WGS specific QC (only valid with VCF datasets). 'Array' (default) or 'WGS' (Generic + WGS qc).
 
     Optional arguments
-      --InclusionList               File with sample IDs to restrict to the analysis. Useful for keeping in the inclusion list of the samples. By default, all samples are kept.
-      --ExclusionList               File with sample IDs to remove from the analysis. Useful for removing the ancestry outliers or restricting the genotype data to one superpopulation. Samples are also removed from the inclusion list. By default, all samples are kept.
-      --AdditionalCovariates        File with additional cohort-specific covariates. First column name SampleID is the sample ID. Following columns are named by covariates.  Categorical covariates need to be text-based (e.g. batch1, batch2, etc). 
+      --inclusion_list              File with sample IDs to restrict to the analysis. Useful for keeping in the inclusion list of the samples. By default, all samples are kept.
+      --exclusion_list              File with sample IDs to remove from the analysis. Useful for removing the ancestry outliers or restricting the genotype data to one superpopulation. Samples are also removed from the inclusion list. By default, all samples are kept.
+      --additional_covariates       File with additional cohort-specific covariates. First column name SampleID is the sample ID. Following columns are named by covariates.  Categorical covariates need to be text-based (e.g. batch1, batch2, etc). 
       --preselected_sex_check_vars  Path to a plink ranges file that defines which variants to use for the check-sex command. Use this when the automatic selection does not yield satisfactory results.
       --plink_executable            Path to plink executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
       --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet. Use this setting when you have to work offline and your build is hg38.
-      --hwe_threshold               HWE p-value threshold for SNP QC steps in genotype QC (default: 1e-6).
-      --qc_maf_threshold            MAF threshold for PLINK SNP QC steps in genotype QC (default: 0.01).
-      --maf_threshold               MAF threshold for final VCF filtering (default: 0.01).
-      --imputation_quality_threshold Minimum imputation quality threshold for final VCF filtering (default: 0.8).
-      --imputation_info_field       INFO sub-field code that stores imputation quality (default: R2).
+      --qc_hwe                      HWE p-value threshold for genotype QC (default: 1e-6).
+      --qc_maf                      MAF threshold for genotype QC (default: 0.01).
+      --vcf_maf                     MAF threshold for output VCF filtering (default: 0.01).
+      --vcf_hwe                     HWE threshold for output VCF filtering (default: 1e-6).
+      --vcf_imp                     Imputation quality threshold for output VCF filtering (default: 0.8).
+      --vcf_imp_field               INFO sub-field code for storing imputation quality (default: R2).
 
     """.stripIndent()
 }
 
 
 // Define location of Report_template.Rmd
-params.report_template = "$baseDir/bin/Report_template.Rmd"
+params.report_template = params.report_template ?: "$baseDir/bin/Report_template.Rmd"
 
 // Define set of accepted genome builds:
 def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh38']
 def genotyping_platforms_accepted = ['Array', 'WGS']
 
-params.vcf = ''
-params.bfile = ''
-params.fam = ''
-params.snpfilter = ''
+params.vcf = params.vcf ?: ''
+params.bfile = params.bfile ?: ''
+params.fam = params.fam ?: ''
+params.snpfilter = params.snpfilter ?: ''
 
-params.plink_executable = ''
-params.plink2_executable = ''
-params.reference_1000g_folder = ''
-params.chain_path = ''
+params.plink_executable = params.plink_executable ?: ''
+params.plink2_executable = params.plink2_executable ?: ''
+params.reference_1000g_folder = params.reference_1000g_folder ?: ''
+params.chain_path = params.chain_path ?: ''
 
 if (params.vcf != '') {
 
@@ -145,38 +146,40 @@ Channel
   .fromPath(params.snpfilter, checkIfExists: true)
   .set { snpfilter_ch }
 
-params.GenOutThresh = 0.4
-params.GenSdThresh = 3
-params.cohort_name = ''
-params.outputDir = 'results'
-params.genome_build = 'hg19'
-params.gen_qc_steps = "Array"
+params.qc_out_s = params.qc_out_s ?: 0.4
+params.qc_out_sd = params.qc_out_sd ?: 3
+params.cohort_name = params.cohort_name ?: ''
+params.output_dir = params.output_dir ?: 'results'
+params.genome_build = params.genome_build ?: 'hg19'
+params.gen_qc_steps = params.gen_qc_steps ?: "Array"
 
-params.hwe_threshold = params.hwe_threshold ?: 1e-6
-params.qc_maf_threshold = params.qc_maf_threshold ?: 0.01
-params.maf_threshold = params.maf_threshold ?: 0.01
-params.imputation_quality_threshold = params.imputation_quality_threshold ?: 0.8
-params.imputation_info_field = params.imputation_info_field ?: 'R2'
+params.qc_hwe = params.qc_hwe ?: 1e-6
+params.qc_maf = params.qc_maf ?: 0.01
+params.vcf_maf = params.vcf_maf ?: 0.01
+params.vcf_hwe = params.vcf_hwe ?: 1e-6
+params.vcf_imp = params.vcf_imp ?: 0.8
+params.vcf_imp_field = params.vcf_imp_field ?: 'R2'
 
 // By default define random non-colliding file names in data folder. If default, these are ignored by corresponding script.
-params.InclusionList = "$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt"
-params.ExclusionList = "$baseDir/data/EmpiricalProbeMatching_AffyU219.txt"
-params.AdditionalCovariates = "$baseDir/data/1000G_pops.txt"
+params.inclusion_list = params.inclusion_list ?: "$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt"
+params.exclusion_list = params.exclusion_list ?: "$baseDir/data/EmpiricalProbeMatching_AffyU219.txt"
+params.additional_covariates = params.additional_covariates ?: "$baseDir/data/1000G_pops.txt"
 
-GenOutThresh_ch = Channel.value(params.GenOutThresh)
-GenSdThresh_ch = Channel.value(params.GenSdThresh)
+qc_out_s_ch = Channel.value(params.qc_out_s)
+qc_out_sd_ch = Channel.value(params.qc_out_sd)
 cohort_name_ch = Channel.value(params.cohort_name)
 genome_build_ch = Channel.value(params.genome_build)
 
-maf_ch = Channel.value(params.maf_threshold)
-hwe_ch = Channel.value(params.hwe_threshold)
-qc_maf_ch = Channel.value(params.qc_maf_threshold)
-imputation_quality_ch = Channel.value(params.imputation_quality_threshold)
-imputation_info_field_ch = Channel.value(params.imputation_info_field)
+vcf_maf_ch = Channel.value(params.vcf_maf)
+qc_hwe_ch = Channel.value(params.qc_hwe)
+qc_maf_ch = Channel.value(params.qc_maf)
+vcf_hwe_ch = Channel.value(params.vcf_hwe)
+vcf_imp_ch = Channel.value(params.vcf_imp)
+vcf_imp_field_ch = Channel.value(params.vcf_imp_field)
 
-InclusionList_ch = Channel.fromPath(params.InclusionList, checkIfExists:true)
-ExclusionList_ch = Channel.fromPath(params.ExclusionList, checkIfExists:true)
-AdditionalCovariates_ch = Channel.fromPath(params.AdditionalCovariates, checkIfExists:true)
+inclusion_list_ch = Channel.fromPath(params.inclusion_list, checkIfExists:true)
+exclusion_list_ch = Channel.fromPath(params.exclusion_list, checkIfExists:true)
+additional_covariates_ch = Channel.fromPath(params.additional_covariates, checkIfExists:true)
 
 if ((params.gen_qc_steps in genotyping_platforms_accepted) == false) {
   exit 1, "[Pipeline error] Genotype QC steps $params.gen_qc_steps not one of: $genotyping_platforms_accepted \n"
@@ -197,27 +200,28 @@ summary['Pipeline Version']         = workflow.manifest.version
 summary['PLINK bfile']              = params.bfile
 summary['Gen QC steps']             = params.gen_qc_steps
 summary['Genome Build']             = params.genome_build
-summary['MAF filter']               = params.maf_threshold
-summary['HWE threshold']            = params.hwe_threshold
-summary['PLINK QC MAF threshold']   = params.qc_maf_threshold
-summary['Imputation filter']        = params.imputation_quality_threshold
-summary['Imputation INFO code']     = params.imputation_info_field
-summary['S threshold']              = params.GenOutThresh
-summary['Gen SD threshold']         = params.GenSdThresh
+summary['QC HWE threshold']         = params.qc_hwe
+summary['QC MAF threshold']         = params.qc_maf
+summary['VCF MAF threshold']        = params.vcf_maf
+summary['VCF HWE threshold']        = params.vcf_hwe
+summary['VCF INFO minimum']         = params.vcf_imp
+summary['VCF INFO field']           = params.vcf_imp_field
+summary['QC S threshold']           = params.qc_out_s
+summary['QC SD threshold']          = params.qc_out_sd
 summary['GTP file']                 = params.gtp
 summary['SNP filter filter']        = params.snpfilter
 summary['Max Memory']               = params.max_memory
 summary['Max CPUs']                 = params.max_cpus
 summary['Max Time']                 = params.max_time
 summary['Cohort name']              = params.cohort_name
-if(params.InclusionList!="$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt") summary['Inclusion list'] = params.InclusionList
-if(params.ExclusionList!="$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt") summary['Exclusion list'] = params.ExclusionList
+if(params.inclusion_list!="$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt") summary['Inclusion list'] = params.inclusion_list
+if(params.exclusion_list!="$baseDir/data/EmpiricalProbeMatching_AffyU219.txt") summary['Exclusion list'] = params.exclusion_list
 summary['Expression platform']      = params.exp_platform
 summary['Plink executable']         = params.plink_executable
 summary['Plink 2 executable']       = params.plink2_executable
 summary['Reference 1000G folder']   = params.reference_1000g_folder
 summary['Chain folder']             = params.chain_path
-summary['Output dir']               = params.outputDir
+summary['Output dir']               = params.output_dir
 summary['Working dir']              = workflow.workDir
 summary['Container Engine']         = workflow.containerEngine
 if(workflow.containerEngine) summary['Container'] = workflow.container
@@ -236,20 +240,20 @@ workflow {
 
     if (params.vcf != '') {
       genotype_ch = vcf_ch
-      .combine(GenOutThresh_ch)
-      .combine(GenSdThresh_ch)
-      .combine(ExclusionList_ch)
-      .combine(InclusionList_ch)
+      .combine(qc_out_s_ch)
+      .combine(qc_out_sd_ch)
+      .combine(exclusion_list_ch)
+      .combine(inclusion_list_ch)
       .combine(genome_build_ch)
       .combine(gtp_ch)
       .combine(snpfilter_ch)
       .combine(plink2_executable_ch)
     } else {
       genotype_ch = bfile_ch
-      .combine(GenOutThresh_ch)
-      .combine(GenSdThresh_ch)
-      .combine(ExclusionList_ch)
-      .combine(InclusionList_ch)
+      .combine(qc_out_s_ch)
+      .combine(qc_out_sd_ch)
+      .combine(exclusion_list_ch)
+      .combine(inclusion_list_ch)
       .combine(genome_build_ch)
       .combine(gtp_ch)
       .combine(snpfilter_ch)
@@ -273,12 +277,12 @@ workflow {
   MERGEBED(merged_inputs_ch)
 
   genotypeqc_input_ch = MERGEBED.out
-      .combine(GenOutThresh_ch)
-      .combine(GenSdThresh_ch)
-      .combine(hwe_ch)
+      .combine(qc_out_s_ch)
+      .combine(qc_out_sd_ch)
+      .combine(qc_hwe_ch)
       .combine(qc_maf_ch)
-      .combine(ExclusionList_ch)
-      .combine(InclusionList_ch)
+      .combine(exclusion_list_ch)
+      .combine(inclusion_list_ch)
       .combine(genome_build_ch)
       .combine(gtp_ch)
       .combine(snpfilter_ch)
@@ -295,9 +299,10 @@ workflow {
     vcf_filter_input_ch = vcf_ch
     .combine(GENOTYPEQC.out[1])
     .combine(snpfilter_ch)
-    .combine(maf_ch)
-    .combine(imputation_quality_ch)
-    .combine(imputation_info_field_ch)
+    .combine(vcf_maf_ch)
+    .combine(vcf_hwe_ch)
+    .combine(vcf_imp_ch)
+    .combine(vcf_imp_field_ch)
 
     FILTERFINALVCF(vcf_filter_input_ch)
 
@@ -311,10 +316,10 @@ workflow {
     .combine(GENOTYPEQC.out[2])
     .combine(GENOTYPEQC.out[3])
     .combine(GENOTYPEQC.out[4])
-    .combine(GenOutThresh_ch)
-    .combine(GenSdThresh_ch)
+    .combine(qc_out_s_ch)
+    .combine(qc_out_sd_ch)
     .combine(report_ch)
-    .combine(AdditionalCovariates_ch)
+    .combine(additional_covariates_ch)
     .combine(filter_vcf_output_files_ch)
 
     report_input_ch.view()
