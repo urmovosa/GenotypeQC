@@ -170,20 +170,26 @@ process FilterFinalVcf {
     # 4) Apply filters (MAF, HWE and imputation quality thresholds).
     bcftools view \
     -i "INFO/MAF>=${maf} && INFO/HWE>=${vcf_hwe_threshold} && INFO/${info_field}>=${imputation_th}" \
-    -Oz -o \${chr}_filtered.vcf.gz \
+    -Oz -o \${chr}_filtered.raw.vcf.gz \
     \${chr}_subset.filled.bcf
+
+    # 5) Standardize variant IDs as CHROM:POS_REF_ALT.
+    bcftools annotate \
+    --set-id '%CHROM:%POS_%REF_%ALT' \
+    -Oz -o \${chr}_filtered.vcf.gz \
+    \${chr}_filtered.raw.vcf.gz
 
     bcftools index \${chr}_filtered.vcf.gz
 
-    # 5) Report post-filtering variant stats.
+    # 6) Report post-filtering variant stats.
     bcftools stats \${chr}_filtered.vcf.gz > \${chr}_filtered.stats.txt
     printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\n" "${info_field}" > \${chr}_filtered.variant_metrics.tsv
     bcftools query \
     -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\n" \
     \${chr}_filtered.vcf.gz >> \${chr}_filtered.variant_metrics.tsv
 
-    # 6) Cleanup interim files.
-    rm -f \${chr}_subset.bcf \${chr}_subset.bcf.csi \${chr}_subset.filled.bcf \${chr}_subset.filled.bcf.csi
+    # 7) Cleanup interim files.
+    rm -f \${chr}_subset.bcf \${chr}_subset.bcf.csi \${chr}_subset.filled.bcf \${chr}_subset.filled.bcf.csi \${chr}_filtered.raw.vcf.gz \${chr}_filtered.raw.vcf.gz.csi
 
     """
 

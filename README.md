@@ -203,7 +203,7 @@ Then submit the job `sbatch submit_CvdlinkGenotypeDataQc_[**CohortName**].sh`. T
   - Monitor the `slurm-***.out` log file and check if all the steps finish without error. Trick: command `watch tail -n 20 slurm-***.out` helps you to interactively monitor the status of the jobs.
   - Use `squeue -u [YourUserName]` to see if individual tasks are in the queue.
 - If the pipeline crashes (e.g. due to walltime), you can just resubmit the same script after the fixes. Nextflow does not rerun completed steps and continues only from the steps which had not completed.
-- When the work has finished, download and check the job report. This file  is automatically written to your output folder `pipeline_info` subfolder, for potential errors or warnings. E.g. `output/pipeline_info/DataQcReport.html`.
+- When the work has finished, download and check the job report. This file is automatically written to your output folder `pipeline_info` subfolder, for potential errors or warnings. E.g. `output/pipeline_info/Cvdlink_GenotypeQc_report.html`.
 - When you need to do some debugging, then you can use the last section of aforementioned report to figure out in which subfolder from `work` folder the actual step was run. You can then navigate to this folder and investigate the following hidden files:
   - `.command.sh`: script which was submitted.
   - `.command.log`: log file for seeing the analysis outputs/errors.
@@ -216,39 +216,43 @@ Pipeline makes the following output (most relevant files outlined):
 
 ```
 |--output
-    |--outputfolder_gen
-        |--gen_data_QCd
-            |--chrAll_ToImputation.bed
-            |--chrAll_ToImputation.bim
-            |--chrAll_ToImputation.fam
-            |--chrAll_ToImputation.log
-            |--HeterozygosityFailed.txt
-            |--SexCheck.txt
-            |--SexCheckFailed.txt
-        |--gen_PCs
-            |--GenotypePCs.txt
-        |--gen_data_summary
-            |--1000G_PC_projections.txt
-            |--...
-        |--gen_plots
-            |--...
-        |--gen_data_summary
-            |--...
-    |--pipeline_info
-      |--Cvdlink_GenotypeQc_report.html
-        |--...
-    |--Report_DataQc_[cohort name].html
-    |--CovariatePCs.txt
-    |--vcf_filtering
-      |--chr*_filtered.vcf.gz
-      |--chr*_filtered.vcf.gz.csi
-      |--chr*_prefilter.stats.txt
-      |--chr*_filtered.stats.txt
-      |--chr*_prefilter.variant_metrics.tsv
-      |--chr*_filtered.variant_metrics.tsv
+  |--outputfolder_gen
+  |   |--gen_data_QCd
+  |   |   |--chrAll_ToImputation.bed
+  |   |   |--chrAll_ToImputation.bim
+  |   |   |--chrAll_ToImputation.fam
+  |   |   |--SexCheck.txt
+  |   |   |--...
+  |   |--gen_PCs
+  |   |   |--GenotypePCs.txt
+  |   |--gen_data_summary
+  |   |   |--1000G_PC_projections.txt
+  |   |   |--vcf_filtering
+  |   |   |   |--chr*_filtered.vcf.gz
+  |   |   |   |--chr*_filtered.vcf.gz.csi
+  |   |   |   |--chr*_prefilter.stats.txt
+  |   |   |   |--chr*_filtered.stats.txt
+  |   |   |   |--chr*_prefilter.variant_metrics.tsv
+  |   |   |   |--chr*_filtered.variant_metrics.tsv
+  |   |--gen_plots
+  |   |   |--...
+  |--vcf_filtering
+  |   |--chr*_filtered.vcf.gz
+  |   |--chr*_filtered.vcf.gz.csi
+  |   |--chr*_prefilter.stats.txt
+  |   |--chr*_filtered.stats.txt
+  |   |--chr*_prefilter.variant_metrics.tsv
+  |   |--chr*_filtered.variant_metrics.tsv
+  |--Report_DataQc_[cohort name].html
+  |--CovariatePCs.txt
   |--pipeline_info
-    |--...
+  |   |--Cvdlink_GenotypeQc_report.html
+  |   |--Cvdlink_GenotypeQc_timeline.html
+  |   |--Cvdlink_GenotypeQc_trace.txt
+  |   |--Cvdlink_GenotypeQc_dag.svg
 ```
+
+Note: The filtered VCF files use standardized variant IDs in `chr:pos_REF_ALT` format.
 
 #### Steps to take
 
