@@ -98,6 +98,8 @@ Optional arguments:
 
 `--vcf_imp_field` INFO sub-field that stores the imputation quality metric (default `R2`).
 
+`--vcf_genotype_field` Optional INFO sub-field that indicates genotyped/typed versus imputed variants (examples: `typed`, `imputed`).
+
 ### Offline / isolated run
 
 See the offline usage instructions and helper script:
@@ -171,6 +173,7 @@ output_path=../output # Output path
 # --reference_1000g_folder [path to folder with 1000G reference data]
 # --chain_path [folder with hg19->hg38 and hg38->hg19 chain files]
 # --vcf_imp_field [INFO sub-field storing imputation quality metric (default R2)]
+# --vcf_genotype_field [optional INFO sub-field indicating typed/genotyped vs imputed status]
 
 # Command:
 NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \
@@ -253,6 +256,13 @@ Pipeline makes the following output (most relevant files outlined):
 ```
 
 Note: The filtered VCF files use standardized variant IDs in `chr:pos_REF_ALT` format.
+
+Note: The HTML report includes a diagnostic for number of genotyped vs imputed variants before QC (per chromosome + combined). This plot/table is shown only when at least one usable indicator field is present in per-chromosome metrics. By default, the pipeline checks common INFO flag names `IMPUTED`/`imputed` and `TYPED`/`typed`, and you can explicitly set `--vcf_genotype_field` for cohort/tool-specific naming.
+
+Note on common naming in tool outputs:
+- VCF specification does not reserve standard INFO keys named `typed` or `imputed`; custom INFO keys are allowed and should be declared in VCF header metadata.
+- Minimac documentation and historical outputs commonly use imputation quality `R2`/`Rsq` metrics; typed/genotyped status appears as `Genotyped` in info summaries, and in some workflows VCF FILTER labels such as `GENOTYPED`/`GENOTYPED_ONLY` are used.
+- Because this naming varies by tool and pipeline, report logic supports both auto-detection and explicit override via `--vcf_genotype_field`.
 
 #### Steps to take
 

@@ -26,3 +26,4 @@ dependencies:
   - bioconda::bioconductor-edger=3.32.1
   - conda-forge::r-hexbin=1.28.1
   - conda-forge::r-remotes=2.4.2
+  - conda-forge::pandoc

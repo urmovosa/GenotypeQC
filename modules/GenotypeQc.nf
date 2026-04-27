@@ -98,7 +98,7 @@ process RenderReport {
   publishDir "${params.output_dir}", mode: 'copy', overwrite: true
 
     input:
-      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), path(additional_covariates), path(vcf_filter_outputs)
+      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), path(additional_covariates), path(vcf_filter_outputs), val(genotype_field)
 
     output:
       path ('outputfolder_gen/')
@@ -124,7 +124,8 @@ process RenderReport {
     dataset_name = "${params.cohort_name}",
     N = "CovariatePCs.txt", 
     S = ${stresh},
-    SD = ${sdtresh}))'
+    SD = ${sdtresh},
+    genotype_field = "${genotype_field}"))'
 
     """
 }
@@ -135,7 +136,7 @@ process FilterFinalVcf {
   publishDir "${params.output_dir}/vcf_filtering", mode: 'copy', overwrite: true
 
     input:
-      tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(vcf_hwe_threshold), val(imputation_th), val(info_field)
+      tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(vcf_hwe_threshold), val(imputation_th), val(info_field), val(genotype_field)
 
     output:
       tuple path("*_filtered.vcf.gz"), path("*_filtered.vcf.gz.csi"), path("*_prefilter.stats.txt"), path("*_filtered.stats.txt"), path("*_prefilter.variant_metrics.tsv"), path("*_filtered.variant_metrics.tsv")
@@ -160,12 +161,21 @@ process FilterFinalVcf {
     -Ob -o \${chr}_subset.filled.bcf \
     -- -t AC,AN,AF,MAF,HWE
 
-    # 3) Report variant stats (MAF, HWE, imputation quality) before filtering.
+    # 3) Report variant stats (MAF, HWE, imputation quality and optional genotype indicator) before filtering.
     bcftools stats \${chr}_subset.filled.bcf > \${chr}_prefilter.stats.txt
-    printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\n" "${info_field}" > \${chr}_prefilter.variant_metrics.tsv
-    bcftools query \
-    -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\n" \
-    \${chr}_subset.filled.bcf >> \${chr}_prefilter.variant_metrics.tsv
+    if [ -n "${genotype_field}" ]; then
+      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\t%s\\n" "${info_field}" "${genotype_field}" > \${chr}_prefilter.variant_metrics.tsv
+      bcftools query \
+      -u \
+      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\t%INFO/${genotype_field}\\n" \
+      \${chr}_subset.filled.bcf >> \${chr}_prefilter.variant_metrics.tsv
+    else
+      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\n" "${info_field}" > \${chr}_prefilter.variant_metrics.tsv
+      bcftools query \
+      -u \
+      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\n" \
+      \${chr}_subset.filled.bcf >> \${chr}_prefilter.variant_metrics.tsv
+    fi
 
     # 4) Apply filters (MAF, HWE and imputation quality thresholds).
     bcftools view \
@@ -183,10 +193,19 @@ process FilterFinalVcf {
 
     # 6) Report post-filtering variant stats.
     bcftools stats \${chr}_filtered.vcf.gz > \${chr}_filtered.stats.txt
-    printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\n" "${info_field}" > \${chr}_filtered.variant_metrics.tsv
-    bcftools query \
-    -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\n" \
-    \${chr}_filtered.vcf.gz >> \${chr}_filtered.variant_metrics.tsv
+    if [ -n "${genotype_field}" ]; then
+      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\t%s\\n" "${info_field}" "${genotype_field}" > \${chr}_filtered.variant_metrics.tsv
+      bcftools query \
+      -u \
+      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\t%INFO/${genotype_field}\\n" \
+      \${chr}_filtered.vcf.gz >> \${chr}_filtered.variant_metrics.tsv
+    else
+      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\n" "${info_field}" > \${chr}_filtered.variant_metrics.tsv
+      bcftools query \
+      -u \
+      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\n" \
+      \${chr}_filtered.vcf.gz >> \${chr}_filtered.variant_metrics.tsv
+    fi
 
     # 7) Cleanup interim files.
     rm -f \${chr}_subset.bcf \${chr}_subset.bcf.csi \${chr}_subset.filled.bcf \${chr}_subset.filled.bcf.csi \${chr}_filtered.raw.vcf.gz \${chr}_filtered.raw.vcf.gz.csi

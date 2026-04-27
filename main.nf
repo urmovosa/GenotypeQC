@@ -45,6 +45,7 @@ def helpMessage() {
       --vcf_hwe                     HWE threshold for output VCF filtering (default: 1e-6).
       --vcf_imp                     Imputation quality threshold for output VCF filtering (default: 0.8).
       --vcf_imp_field               INFO sub-field code for storing imputation quality (default: R2).
+      --vcf_genotype_field          INFO sub-field code indicating genotyped/typed variants (optional; e.g. typed or imputed).
 
     """.stripIndent()
 }
@@ -156,6 +157,7 @@ params.vcf_maf = params.vcf_maf ?: 0.01
 params.vcf_hwe = params.vcf_hwe ?: 1e-6
 params.vcf_imp = params.vcf_imp ?: 0.8
 params.vcf_imp_field = params.vcf_imp_field ?: 'R2'
+params.vcf_genotype_field = params.vcf_genotype_field ?: ''
 
 // By default define random non-colliding file names in data folder. If default, these are ignored by corresponding script.
 params.inclusion_list = params.inclusion_list ?: "$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt"
@@ -173,6 +175,7 @@ qc_maf_ch = Channel.value(params.qc_maf)
 vcf_hwe_ch = Channel.value(params.vcf_hwe)
 vcf_imp_ch = Channel.value(params.vcf_imp)
 vcf_imp_field_ch = Channel.value(params.vcf_imp_field)
+vcf_genotype_field_ch = Channel.value(params.vcf_genotype_field)
 
 inclusion_list_ch = Channel.fromPath(params.inclusion_list, checkIfExists:true)
 exclusion_list_ch = Channel.fromPath(params.exclusion_list, checkIfExists:true)
@@ -198,6 +201,7 @@ summary['VCF MAF threshold']        = params.vcf_maf
 summary['VCF HWE threshold']        = params.vcf_hwe
 summary['VCF INFO minimum']         = params.vcf_imp
 summary['VCF INFO field']           = params.vcf_imp_field
+summary['VCF genotype INFO field']  = params.vcf_genotype_field
 summary['QC S threshold']           = params.qc_out_s
 summary['QC SD threshold']          = params.qc_out_sd
 summary['GTP file']                 = params.gtp
@@ -295,6 +299,7 @@ workflow {
     .combine(vcf_hwe_ch)
     .combine(vcf_imp_ch)
     .combine(vcf_imp_field_ch)
+    .combine(vcf_genotype_field_ch)
 
     FILTERFINALVCF(vcf_filter_input_ch)
 
@@ -313,6 +318,7 @@ workflow {
     .combine(report_ch)
     .combine(additional_covariates_ch)
     .combine(filter_vcf_output_files_ch)
+    .combine(vcf_genotype_field_ch)
 
     report_input_ch.view()
 
