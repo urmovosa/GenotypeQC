@@ -14,6 +14,7 @@ params:
   S: 0.4
   SD: 3
   genotype_field: ""
+  imputation_metric_field: "R2"
 ---
 
 # Dataset
@@ -432,6 +433,103 @@ ggplot(maf_long, aes(x = MAF)) +
 ```
 
 **Genome-wide MAF histograms before and after QC filters.**
+
+### Imputation quality distributions (genome-wide)
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis'}
+impq_plot_ready <- FALSE
+imp_metric_field <- trimws(as.character(params$imputation_metric_field))
+if (!nzchar(imp_metric_field)) {
+  imp_metric_field <- "R2"
+}
+
+pick_imputation_metric_column <- function(dt, preferred_field = "R2") {
+  if (preferred_field %in% colnames(dt)) {
+    return(preferred_field)
+  }
+
+  known_non_metric <- c("CHROM", "POS", "ID", "MAF", "HWE", "TYPED", "typed", "IMPUTED", "imputed")
+  candidates <- setdiff(colnames(dt), known_non_metric)
+  if (length(candidates) == 0) {
+    return(NA_character_)
+  }
+
+  numeric_candidates <- candidates[sapply(candidates, function(cn) {
+    vals <- suppressWarnings(as.numeric(dt[[cn]]))
+    sum(!is.na(vals)) > 0
+  })]
+
+  if (length(numeric_candidates) == 0) {
+    return(NA_character_)
+  }
+
+  numeric_candidates[1]
+}
+
+collect_imputation_metric <- function(files, stage_label, preferred_field = "R2") {
+  if (length(files) == 0) {
+    return(list(data = data.frame(Stage = character(0), Metric = numeric(0), stringsAsFactors = FALSE), used_fields = character(0)))
+  }
+
+  metric_rows <- list()
+  used_fields <- character(0)
+
+  for (filepath in files) {
+    dt <- data.table::fread(filepath, showProgress = FALSE)
+    metric_col <- pick_imputation_metric_column(dt, preferred_field)
+    if (is.na(metric_col)) {
+      next
+    }
+
+    vals <- suppressWarnings(as.numeric(dt[[metric_col]]))
+    vals <- vals[!is.na(vals)]
+    if (length(vals) == 0) {
+      next
+    }
+
+    used_fields <- union(used_fields, metric_col)
+    metric_rows[[length(metric_rows) + 1]] <- data.frame(
+      Stage = stage_label,
+      Metric = vals,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  if (length(metric_rows) == 0) {
+    return(list(data = data.frame(Stage = character(0), Metric = numeric(0), stringsAsFactors = FALSE), used_fields = used_fields))
+  }
+
+  list(data = do.call(rbind, metric_rows), used_fields = used_fields)
+}
+
+imp_before_res <- collect_imputation_metric(prefilter_files, "Before QC filters", imp_metric_field)
+imp_after_res <- collect_imputation_metric(filtered_files, "After QC filters", imp_metric_field)
+impq_long <- rbind(imp_before_res$data, imp_after_res$data)
+impq_used_fields <- union(imp_before_res$used_fields, imp_after_res$used_fields)
+
+if (nrow(impq_long) == 0) {
+  cat("Genome-wide imputation quality histogram not available: no valid imputation quality values were found in per-chromosome metrics files.\n")
+} else {
+  impq_plot_ready <- TRUE
+  cat(sprintf("Imputation quality field(s) used for plotting: `%s`.\n\n", paste(impq_used_fields, collapse = "`, `")))
+  cat(sprintf("Genome-wide values used: **before QC filters = %s**, **after QC filters = %s**.\n\n",
+              format(nrow(imp_before_res$data), big.mark = ",", scientific = FALSE),
+              format(nrow(imp_after_res$data), big.mark = ",", scientific = FALSE)))
+}
+```
+
+```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = exists("impq_plot_ready") && impq_plot_ready}
+ggplot(impq_long, aes(x = Metric)) +
+  geom_histogram(bins = 50, color = "white", fill = "darkseagreen4") +
+  facet_wrap(~ Stage, ncol = 2, scales = "free_y") +
+  theme_bw() +
+  xlab("Imputation quality metric") +
+  ylab("Variant count")
+```
+
+**Genome-wide imputation quality histograms before and after QC filters.**
+
+Interpretation: for well-imputed data, this distribution should be **right-heavy** (most variants concentrated toward high imputation-quality values, e.g. near 1 for R2-style metrics).
 
 ### Allele frequency concordance with reference panel
 

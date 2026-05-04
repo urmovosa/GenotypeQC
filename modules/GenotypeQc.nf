@@ -125,7 +125,8 @@ process RenderReport {
     N = "CovariatePCs.txt", 
     S = ${stresh},
     SD = ${sdtresh},
-    genotype_field = "${genotype_field}"))'
+    genotype_field = "${genotype_field}",
+    imputation_metric_field = "${params.vcf_imp_field}"))'
 
     """
 }
