@@ -1,4 +1,6 @@
-# Offline/isolated setup (Data QC only)
+# Offline/isolated setup (host runtime)
+
+If you use the bundled Docker image from the main README, PLINK, Nextflow, the 1000G reference, and the liftOver chain files are already inside the image. The instructions below only apply to host or scheduler runs that stay outside that bundled image.
 
 This pipeline can run without internet access if you provide the required large assets locally. Do **not** commit these large assets to the repo.
 

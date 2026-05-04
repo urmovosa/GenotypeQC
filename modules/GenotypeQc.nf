@@ -13,7 +13,11 @@ output:
 """
 
 chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
-zcat ${snplist} | cut -f1 | tail -n +2 > hapmap3_snplist.txt
+if gzip -t "${snplist}" >/dev/null 2>&1; then
+  gzip -dc "${snplist}"
+else
+  cat "${snplist}"
+fi | cut -f1 | tail -n +2 > hapmap3_snplist.txt
 
 ${plink2_executable} \
   --vcf ${vcf} \
@@ -136,7 +140,7 @@ process RenderReport {
 
 process FilterFinalVcf {
 
-    container 'quay.io/eqtlgen/eqtlgenimpute:v0.2'
+  container { params.embedded_runtime ? null : 'quay.io/eqtlgen/eqtlgenimpute:v0.2' }
   publishDir "${params.output_dir}/vcf_filtering", mode: 'copy', overwrite: true
 
     input:
@@ -148,7 +152,11 @@ process FilterFinalVcf {
     script:
     """
     chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
-    zcat ${snplist} | cut -f1 | tail -n +2 > hapmap3_snplist.txt
+    if gzip -t "${snplist}" >/dev/null 2>&1; then
+      gzip -dc "${snplist}"
+    else
+      cat "${snplist}"
+    fi | cut -f1 | tail -n +2 > hapmap3_snplist.txt
 
     awk '{print \$2}' ${filtered_fam} | sort -u > iids.txt
 

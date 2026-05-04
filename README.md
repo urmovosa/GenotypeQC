@@ -25,10 +25,8 @@ Performs the following main steps:
 ### Requirements for the system
 
 - Have access to HPC or workstation (preferably with multiple cores).
-- Have Bash >=3.2 installed.
-- Have Java >=17 installed.
-- Have Nextflow installed.
-- Have either Singularity/Apptainer or Docker available for containerized runs.
+- For host or scheduler runs: have Bash >=3.2, Java >=17, Nextflow, and either Singularity/Apptainer or Docker available.
+- For the bundled single-image run: only Docker is required on the host.
 
 ### Setup of the pipeline
 
@@ -37,6 +35,55 @@ You can either clone it by using git (if available in HPC):
 `git clone https://github.com/urmovosa/GenotypeQC.git`
 
 Or just download this from the gitlab/github download link and unzip.
+
+### Single Docker image
+
+The repo now ships a self-contained Docker build for local execution. The image includes Java, Nextflow, the R/conda runtime, PLINK 1.9, PLINK 2, the 1000G reference, and the hg19<->hg38 liftOver chain files. In this mode you only need to mount your study input files and a writable workspace.
+
+Build the image:
+
+```bash
+docker buildx build --platform linux/amd64 --load -t genotypeqc:latest .
+```
+
+Run with per-chromosome VCF input. The image entrypoint injects `-profile single_docker` automatically:
+
+```bash
+docker run --rm -it \
+  --platform linux/amd64 \
+  -v "$PWD:/workspace" \
+  -v /absolute/path/to/input:/input:ro \
+  genotypeqc:latest \
+  --vcf /input/imputed_vcfs \
+  --gtp /input/gte.txt \
+  --cohort_name EstBB_HT12v3 \
+  --genome_build GRCh38 \
+  --output_dir /workspace/results \
+  -resume
+```
+
+Run with PLINK bed/bim/fam input:
+
+```bash
+docker run --rm -it \
+  --platform linux/amd64 \
+  -v "$PWD:/workspace" \
+  -v /absolute/path/to/input:/input:ro \
+  genotypeqc:latest \
+  --bfile /input/study_prefix \
+  --gtp /input/gte.txt \
+  --cohort_name EstBB_HT12v3 \
+  --genome_build GRCh37 \
+  --output_dir /workspace/results \
+  -resume
+```
+
+Notes:
+
+- Mount a writable directory at `/workspace` so Nextflow can keep `work/`, `.nextflow/`, and output files between runs.
+- The bundled PLINK binaries are `x86_64`, so build and run the image as `linux/amd64` on Apple Silicon hosts. Use `docker buildx` for the image build.
+- `--plink_executable`, `--plink2_executable`, `--reference_1000g_folder`, and `--chain_path` are optional in this mode because the image already bundles them.
+- `--snpfilter` is also optional unless you want to override the bundled HapMap3 list.
 
 ### Input files
 
@@ -55,8 +102,6 @@ Or just download this from the gitlab/github download link and unzip.
 `--genome_build`                Genome build of the cohort. Either hg18, GRCh36, hg19, GRCh37, hg38 or GRCh38. Defaults to hg19.
 
 `--gtp`                         Genotype-to-expression linking file. Tab-delimited, no header. First column: sample ID for genotype data. Second column: corresponding sample ID for gene expression data. Can be used to filter samples from the analysis.
-
-`--snpfilter`                   Gzipped file with HapMap3 variants.
 
 `--output_dir`                  Path to the output directory. Defaults to `results`.
     
@@ -88,13 +133,15 @@ Optional arguments:
 
 `--fam` PLINK .fam file. Useful for specifying known sex of the samples.
 
-`--plink_executable`    Path to plink executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
+`--snpfilter` HapMap3 variant list. Defaults to the bundled `data/hapmap3_snps.tsv`.
 
-`--plink2_executable`   Path to plink2 executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
+`--plink_executable`    Path to plink executable. By default this is automatically downloaded from internet for host runs, or bundled in the `single_docker` profile.
 
-`--reference_1000g_folder`  Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
+`--plink2_executable`   Path to plink2 executable. By default this is automatically downloaded from internet for host runs, or bundled in the `single_docker` profile.
 
-`--chain_path` Path to folder containing hg19ToHg38 and hg38ToHg19 chain files (only needed for hg38/GRCh38).
+`--reference_1000g_folder`  Path to 1000g reference folder. By default this is automatically downloaded from internet for host runs, or bundled in the `single_docker` profile.
+
+`--chain_path` Path to folder containing hg19ToHg38 and hg38ToHg19 chain files (only needed for hg38/GRCh38). These are bundled in the `single_docker` profile.
 
 `--vcf_imp_field` INFO sub-field that stores the imputation quality metric (default `R2`).
 
@@ -108,6 +155,8 @@ See the offline usage instructions and helper script:
 - [scripts/offline_fetch.sh](scripts/offline_fetch.sh)
 
 Note: for offline runs, provide local paths for `--plink_executable`, `--plink2_executable`, `--reference_1000g_folder`, and `--chain_path` when needed.
+
+If you use the bundled Docker image above, those assets are already included in the image and this extra setup is not needed.
 
 ### Running the data QC command
 

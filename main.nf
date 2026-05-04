@@ -24,7 +24,6 @@ def helpMessage() {
       --bfile                       Path to unimputed genotype files in plink bed/bim/fam format (without extensions bed/bim/fam). Required if --vcf is not provided.
       --vcf                         Path to per-chromosome VCF input files. Required if --bfile is not provided.
       --fam                         Optional path to a plink fam file. This is especially helpful for sex annotation of samples in VCF files.
-      --snpfilter                   Gzipped file with HapMap3 variants.
       --gtp                         Genotype-to-expression linking file. Tab-delimited, no header. First column: sample ID for genotype data. Can be used to filter samples from the analysis.
       --output_dir                  Path to the output directory.
       --qc_out_s                    "Outlierness" score threshold for excluding ethnic outliers. Defaults to 0.4 but it should be adjusted according to visual inspection.
@@ -35,10 +34,11 @@ def helpMessage() {
       --exclusion_list              File with sample IDs to remove from the analysis. Useful for removing the ancestry outliers or restricting the genotype data to one superpopulation. Samples are also removed from the inclusion list. By default, all samples are kept.
       --additional_covariates       File with additional cohort-specific covariates. First column name SampleID is the sample ID. Following columns are named by covariates.  Categorical covariates need to be text-based (e.g. batch1, batch2, etc). 
       --preselected_sex_check_vars  Path to a plink ranges file that defines which variants to use for the check-sex command. Use this when the automatic selection does not yield satisfactory results.
-      --plink_executable            Path to plink executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
-      --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
-      --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet. Use this setting when you have to work offline.
-      --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet. Use this setting when you have to work offline and your build is hg38.
+      --snpfilter                   HapMap3 variant list. Defaults to the bundled list at $baseDir/data/hapmap3_snps.tsv.
+      --plink_executable            Path to plink executable. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
+      --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
+      --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
+      --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet, or bundled in the single_docker profile.
       --qc_hwe                      HWE p-value threshold for genotype QC (default: 1e-6).
       --qc_maf                      MAF threshold for genotype QC (default: 0.01).
       --vcf_maf                     MAF threshold for output VCF filtering (default: 0.01).
@@ -53,6 +53,14 @@ def helpMessage() {
 
 // Define location of Report_template.Rmd
 params.report_template = params.report_template ?: "$baseDir/bin/Report_template.Rmd"
+params.embedded_runtime = params.embedded_runtime ?: false
+
+if (params.embedded_runtime) {
+  params.plink_executable = params.plink_executable ?: "$baseDir/.runtime/bin/plink"
+  params.plink2_executable = params.plink2_executable ?: "$baseDir/.runtime/bin/plink2"
+  params.reference_1000g_folder = params.reference_1000g_folder ?: "$baseDir/.runtime/reference_1000g"
+  params.chain_path = params.chain_path ?: "$baseDir/.runtime/chain"
+}
 
 // Define set of accepted genome builds:
 def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh38']
@@ -60,7 +68,7 @@ def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh3
 params.vcf = params.vcf ?: ''
 params.bfile = params.bfile ?: ''
 params.fam = params.fam ?: ''
-params.snpfilter = params.snpfilter ?: ''
+params.snpfilter = params.snpfilter ?: "$baseDir/data/hapmap3_snps.tsv"
 
 params.plink_executable = params.plink_executable ?: ''
 params.plink2_executable = params.plink2_executable ?: ''
@@ -223,6 +231,7 @@ summary['Plink executable']         = params.plink_executable
 summary['Plink 2 executable']       = params.plink2_executable
 summary['Reference 1000G folder']   = params.reference_1000g_folder
 summary['Chain folder']             = params.chain_path
+summary['Embedded runtime']         = params.embedded_runtime
 summary['Output dir']               = params.output_dir
 summary['Container Engine']         = workflow.containerEngine
 if(workflow.containerEngine) summary['Container'] = workflow.container
