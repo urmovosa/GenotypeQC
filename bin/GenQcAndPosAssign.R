@@ -531,11 +531,11 @@ message("Read in target data.")
 target_bed <- bed(args$target_bed)
 target_bed$.fam <- read_fam(args$target_bed)
 
-# Standardize chromosome labels in the in-memory map for downstream checks.
-target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
+# Standardize chromosome labels via a plain vector; bed() map bindings are not mutable.
+target_chromosomes <- standardize_chr_labels(target_bed$map$chromosome)
 
 # Check chromosome count in input files
-chromosomes_present <- sort(unique(target_bed$map$chromosome))
+chromosomes_present <- sort(unique(target_chromosomes))
 autosomes_present <- chromosomes_present[chromosomes_present %in% as.character(1:22)]
 has_x_chr <- "X" %in% chromosomes_present
 valid_chromosome_count <- length(autosomes_present) == 22 && (has_x_chr || length(chromosomes_present) == 22)
@@ -692,9 +692,6 @@ ref_bed <- bed(paste0(ref_1000g_prefix, ".bed"))
 target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
 target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
 
-# Standardize chromosome labels after QC reload
-target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
-
 # Verify genome build in target (input) genotype data
 check_genome_build(
   target_bed_obj = target_bed,
@@ -711,7 +708,7 @@ if (any(duplicated(target_bed$fam$`sample.ID`))) {
   stop("Individual sample IDs should be unique. Exiting...")
 }
 
-sex_check_data_set_chromosomes <- unique(target_bed$map$chromosome)
+sex_check_data_set_chromosomes <- unique(standardize_chr_labels(target_bed$map$chromosome))
 
 sex_check_out_path <- paste0(args$output, "/gen_data_QCd/SexCheck.txt")
 sex_check_removed_out_path <- paste0(args$output, "/gen_data_QCd/SexCheckFailed.txt")
@@ -918,7 +915,6 @@ if (length(indices_of_het_failed_samples) > 0) {
 
   target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
   target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
-  target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
   indices_of_het_passed_samples <- rows_along(target_bed)
 }
 
@@ -1252,7 +1248,6 @@ if (length(samples_to_remove_due_to_relatedness) > 0) {
 
   target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
   target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
-  target_bed$map$chromosome <- standardize_chr_labels(target_bed$map$chromosome)
   indices_of_het_passed_samples <- rows_along(target_bed)
   indices_of_passed_samples <- rows_along(target_bed)
 }

@@ -94,7 +94,7 @@ process MergeBed {
       ls chr*_HapMap3_filtered.bed \
       | sed 's/.bed\$//' > mergelist.txt
 
-      ${plink2_executable} --merge-list mergelist.txt --make-bed --out "chrAll"
+      ${plink2_executable} --pmerge-list mergelist.txt bfile --make-bed --out "chrAll"
       """
 }
 
