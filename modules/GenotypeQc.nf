@@ -5,7 +5,7 @@ process ConvertAndFilterVcf {
 input:
   tuple path(vcf), val(s_stat), val(sd_thresh), path(ExclusionList), \
       path(InclusionList), val(genome_build), path(genotype_phenotype), path(snplist),
-      file(plink2_executable)
+  val(plink2_executable)
 
 output:
   tuple path("*_HapMap3_filtered.bed"), path("*_HapMap3_filtered.bim"), path("*_HapMap3_filtered.fam")
@@ -28,9 +28,10 @@ process GenotypeQC {
 
     input:
   tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), path(ExclusionList), \
-      path(InclusionList), val(genome_build), path(genotype_phenotype), path(snplist), file(plink2_executable)
+      path(InclusionList), val(genome_build), path(genotype_phenotype), path(snplist)
       file(fam_annot)
       file(plink_executable)
+      file(plink2_executable)
       file(reference_1000g_folder)
       file(chain_path)
 
@@ -79,7 +80,7 @@ process GenotypeQC {
 process MergeBed {
 
     input:
-      tuple file(bed), file(bim), file(fam)
+  tuple file(bed), file(bim), file(fam), val(plink2_executable)
       
     output:
       tuple file("chrAll.bed"), file("chrAll.bim"), file("chrAll.fam")
@@ -89,7 +90,7 @@ process MergeBed {
       ls chr*_HapMap3_filtered.bed \
       | sed 's/.bed\$//' > mergelist.txt
 
-      plink2 --merge-list mergelist.txt --make-bed --out "chrAll"
+      ${plink2_executable} --merge-list mergelist.txt --make-bed --out "chrAll"
       """
 }
 
@@ -109,7 +110,9 @@ process RenderReport {
     """
     # Stage VCF filtering output files for the report
     mkdir -p outputfolder_gen/gen_data_summary/vcf_filtering
-    cp -L ${vcf_filter_outputs} outputfolder_gen/gen_data_summary/vcf_filtering/
+    if [ -n "${vcf_filter_outputs}" ]; then
+      cp -L ${vcf_filter_outputs} outputfolder_gen/gen_data_summary/vcf_filtering/
+    fi
 
     # Make combined covariate file
     Rscript --vanilla $baseDir/bin/MakeCovariateFile.R ${sexcheck} "${additional_covariates}"
@@ -230,6 +233,7 @@ workflow GENOTYPEQC {
           data, 
           fam.ifEmpty { Channel.value(null) },
           plink.ifEmpty { Channel.value(null) }, 
+      plink2.ifEmpty { Channel.value(null) }, 
           reference.ifEmpty { Channel.value(null) }, 
           chain.ifEmpty { Channel.value(null) }
           )
@@ -251,8 +255,8 @@ workflow RENDERREPORT {
 
     emit:
       Geno_output_ch = RenderReport.out[0]
-      Covariate_PC_ch = RenderReport.out[1]
-      Report_output_ch = RenderReport.out[2]
+      Report_output_ch = RenderReport.out[1]
+      Covariate_PC_ch = RenderReport.out[2]
 
 }
 

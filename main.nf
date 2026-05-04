@@ -13,19 +13,19 @@ def helpMessage() {
         --bfile EstBB_HT12v3\
         --gtp gte_EstBB_HT12v3.txt\
         --cohort_name EstBB_HT12v3\
-        --genome_build GRCh37
+        --genome_build GRCh37\
         --output_dir EstBB_HT12v3_GenoQc\
         -profile slurm\
         -resume
 
-    Mandatory arguments:
+    Required arguments:
       --cohort_name                 Name of the cohort.
       --genome_build                Genome build of the cohort. Either hg18, GRCh36, hg19, GRCh37, hg38 or GRCh38.
-      --bfile                       Path to unimputed genotype files in plink bed/bim/fam format (without extensions bed/bim/fam).
-      --vcf                         Path to a vcf file.
-      --fam                         Path to a plink fam file. This is especially helpful for sex annotation of samples in VCF files.
+      --bfile                       Path to unimputed genotype files in plink bed/bim/fam format (without extensions bed/bim/fam). Required if --vcf is not provided.
+      --vcf                         Path to per-chromosome VCF input files. Required if --bfile is not provided.
+      --fam                         Optional path to a plink fam file. This is especially helpful for sex annotation of samples in VCF files.
       --snpfilter                   Gzipped file with HapMap3 variants.
-      --gtp                         Genotype file. Tab-delimited, no header. First column: sample ID for genotype data. Can be used to filter samples from the analysis.
+      --gtp                         Genotype-to-expression linking file. Tab-delimited, no header. First column: sample ID for genotype data. Can be used to filter samples from the analysis.
       --output_dir                  Path to the output directory.
       --qc_out_s                    "Outlierness" score threshold for excluding ethnic outliers. Defaults to 0.4 but it should be adjusted according to visual inspection.
       --qc_out_sd                   Threshold for declaring samples outliers based on genetic PC1 and PC2 SD from mean. Defaults to 3 and should be adjusted according to visual inspection.
@@ -121,8 +121,15 @@ if (params.plink2_executable) {
     .fromPath(params.plink2_executable)
     .ifEmpty('EMPTY')
     .set { plink2_executable_ch }
+
+  Channel
+    .fromPath(params.plink2_executable)
+    .ifEmpty('EMPTY')
+    .map { it.toString() }
+    .set { plink2_cmd_ch }
 } else {
   Channel.empty().set {plink2_executable_ch}
+  Channel.value('plink2').set { plink2_cmd_ch }
 }
 if (params.reference_1000g_folder) {
   Channel
@@ -212,13 +219,11 @@ summary['Max Time']                 = params.max_time
 summary['Cohort name']              = params.cohort_name
 if(params.inclusion_list!="$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt") summary['Inclusion list'] = params.inclusion_list
 if(params.exclusion_list!="$baseDir/data/EmpiricalProbeMatching_AffyU219.txt") summary['Exclusion list'] = params.exclusion_list
-summary['Expression platform']      = params.exp_platform
 summary['Plink executable']         = params.plink_executable
 summary['Plink 2 executable']       = params.plink2_executable
 summary['Reference 1000G folder']   = params.reference_1000g_folder
 summary['Chain folder']             = params.chain_path
 summary['Output dir']               = params.output_dir
-summary['Working dir']              = workflow.workDir
 summary['Container Engine']         = workflow.containerEngine
 if(workflow.containerEngine) summary['Container'] = workflow.container
 summary['Current home']             = "$HOME"
@@ -243,36 +248,31 @@ workflow {
       .combine(genome_build_ch)
       .combine(gtp_ch)
       .combine(snpfilter_ch)
-      .combine(plink2_executable_ch)
-    } else {
-      genotype_ch = bfile_ch
-      .combine(qc_out_s_ch)
-      .combine(qc_out_sd_ch)
-      .combine(exclusion_list_ch)
-      .combine(inclusion_list_ch)
-      .combine(genome_build_ch)
-      .combine(gtp_ch)
-      .combine(snpfilter_ch)
-      .combine(plink2_executable_ch)
-    }
+      .combine(plink2_cmd_ch)
    
-    CONVERTANDFILTERVCF(
-      genotype_ch
-      )
+      CONVERTANDFILTERVCF(
+        genotype_ch
+        )
 
-  merged_inputs_ch = CONVERTANDFILTERVCF.out
-      .map { [it] }
-      .collect()
-      .map { list_of_tuples ->   // list_of_tuples = [[bed1,bim1,fam1], [bed2,bim2,fam2], ...]
-      def beds = list_of_tuples.collect { it[0] }
-      def bims = list_of_tuples.collect { it[1] }
-      def fams = list_of_tuples.collect { it[2] }
-      tuple(beds, bims, fams)
-      }
+      merged_inputs_ch = CONVERTANDFILTERVCF.out
+        .map { [it] }
+        .collect()
+        .map { list_of_tuples ->   // list_of_tuples = [[bed1,bim1,fam1], [bed2,bim2,fam2], ...]
+        def beds = list_of_tuples.collect { it[0] }
+        def bims = list_of_tuples.collect { it[1] }
+        def fams = list_of_tuples.collect { it[2] }
+        tuple(beds, bims, fams)
+        }
+        .combine(plink2_cmd_ch)
 
-  MERGEBED(merged_inputs_ch)
+      MERGEBED(merged_inputs_ch)
 
-  genotypeqc_input_ch = MERGEBED.out
+      genotype_source_ch = MERGEBED.out
+    } else {
+      genotype_source_ch = bfile_ch
+    }
+
+  genotypeqc_input_ch = genotype_source_ch
       .combine(qc_out_s_ch)
       .combine(qc_out_sd_ch)
       .combine(qc_hwe_ch)
@@ -282,7 +282,6 @@ workflow {
       .combine(genome_build_ch)
       .combine(gtp_ch)
       .combine(snpfilter_ch)
-      .combine(plink2_executable_ch)
 
   GENOTYPEQC(
       genotypeqc_input_ch, 
@@ -292,21 +291,25 @@ workflow {
       reference_1000g_ch, 
       chain_path_ch)
 
-    vcf_filter_input_ch = vcf_ch
-    .combine(GENOTYPEQC.out[1])
-    .combine(snpfilter_ch)
-    .combine(vcf_maf_ch)
-    .combine(vcf_hwe_ch)
-    .combine(vcf_imp_ch)
-    .combine(vcf_imp_field_ch)
-    .combine(vcf_genotype_field_ch)
+    if (params.vcf != '') {
+      vcf_filter_input_ch = vcf_ch
+      .combine(GENOTYPEQC.out[1])
+      .combine(snpfilter_ch)
+      .combine(vcf_maf_ch)
+      .combine(vcf_hwe_ch)
+      .combine(vcf_imp_ch)
+      .combine(vcf_imp_field_ch)
+      .combine(vcf_genotype_field_ch)
 
-    FILTERFINALVCF(vcf_filter_input_ch)
+      FILTERFINALVCF(vcf_filter_input_ch)
 
-    filter_vcf_output_files_ch = FILTERFINALVCF.out
-    .map { it.flatten() }
-    .collect()
-    .map { it.flatten() }
+      filter_vcf_output_files_ch = FILTERFINALVCF.out
+      .map { it.flatten() }
+      .collect()
+      .map { it.flatten() }
+    } else {
+      filter_vcf_output_files_ch = Channel.value([])
+    }
 
     report_input_ch = GENOTYPEQC.out[0]
     .combine(GENOTYPEQC.out[1])
@@ -319,8 +322,6 @@ workflow {
     .combine(additional_covariates_ch)
     .combine(filter_vcf_output_files_ch)
     .combine(vcf_genotype_field_ch)
-
-    report_input_ch.view()
 
     RENDERREPORT(report_input_ch) 
 

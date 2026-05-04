@@ -41,16 +41,23 @@ output_path=../output # Output path
 
 # Additional settings and optional arguments for the command
 
-# --GenOutThresh [numeric threshold]
-# --GenSdThresh [numeric threshold]
-# --InclusionList [file with the list of samples to restrict the analysis]
-# --ExclusionList [file with the list of samples to remove from the analysis]
-# --AdditionalCovariates [file with additional covariates. First column should be `SampleID`]
+# --qc_out_s [numeric threshold]
+# --qc_out_sd [numeric threshold]
+# --qc_hwe [HWE p-value threshold for genotype QC]
+# --qc_maf [MAF threshold for genotype QC]
+# --vcf_maf [MAF threshold for final VCF filtering]
+# --vcf_hwe [HWE p-value threshold for final VCF filtering]
+# --vcf_imp [minimum imputation quality for final VCF filtering]
+# --inclusion_list [file with the list of samples to restrict the analysis]
+# --exclusion_list [file with the list of samples to remove from the analysis]
+# --additional_covariates [file with additional covariates. First column should be `SampleID`]
 # --fam [PLINK .fam file.]
 # --plink_executable [path to plink executable (PLINK v1.90b6.26 64-bit)]
 # --plink2_executable [path to plink2 executable (PLINK v2.00a3.7LM 64-bit Intel)]
 # --reference_1000g_folder [path to folder with 1000G reference data]
 # --chain_path [folder with hg19->hg38 and hg38->hg19 chain files]
+# --vcf_imp_field [INFO sub-field storing imputation quality metric (default R2)]
+# --vcf_genotype_field [optional INFO sub-field indicating typed/genotyped vs imputed status]
 
 # Command:
 NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \
@@ -59,7 +66,7 @@ NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \
 --cohort_name ${cohort_name} \
 --genome_build ${genome_build} \
 --gtp ${gtp} \
---outputDir ${output_path}  \
+--output_dir ${output_path}  \
 --plink2_executable /gpfs/space/GI/GV/Projects/eQTLGenPhase2/temp_fix_offline_files/input/eQTLGenP2OfflineFiles/1_DataQC_additional_files/plink_executables/plink2 \
 -profile slurm,singularity \
 -resume

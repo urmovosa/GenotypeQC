@@ -14,7 +14,7 @@ Performs the following main steps:
   - Visualisation of samples in the genetic reference space, instructions how to remove or split the data in case of multi-ancestry samples.
   - Removal of in-sample genetic outliers.
   - Calculates 10 first genetic principal components (PCs), used in analyses as covariates to correct for population stratification
-  - Filters full imputed dataset to exclude samples and variants failing QC (adjustable filters for Hardy-Weinberg P, MAF and imputation quality). 
+  - Filters full imputed dataset to exclude samples and variants failing QC (adjustable filters for Hardy-Weinberg P, MAF and imputation quality) when VCF input is provided. 
 - Additional steps:
   - Reorders the genotype samples into random order.
   - Organises all the QCd data into the standard folder format.
@@ -256,6 +256,8 @@ Pipeline makes the following output (most relevant files outlined):
 ```
 
 Note: The filtered VCF files use standardized variant IDs in `chr:pos_REF_ALT` format.
+
+Note: When running the pipeline with `--bfile` input instead of `--vcf`, the final `vcf_filtering` outputs are not produced and the report shows the VCF-based diagnostics as unavailable.
 
 Note: The HTML report includes a diagnostic for number of genotyped vs imputed variants before QC (per chromosome + combined). This plot/table is shown only when at least one usable indicator field is present in per-chromosome metrics. By default, the pipeline checks common INFO flag names `IMPUTED`/`imputed` and `TYPED`/`typed`, and you can explicitly set `--vcf_genotype_field` for cohort/tool-specific naming.
 

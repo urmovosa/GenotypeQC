@@ -11,6 +11,10 @@ __pycache__/
 .RData
 .Rproj.user/
 
+# Local report smoke-test artifacts
+.tmp_report_smoke/
+.tmp_report_realdata/
+
 # Nextflow
 .nextflow/
 .nextflow.log
