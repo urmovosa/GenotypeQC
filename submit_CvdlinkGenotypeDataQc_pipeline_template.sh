@@ -24,12 +24,10 @@ set -f
 
 # Define paths
 nextflow_path=[Nextflow path] # folder where Nextflow executable is
+plink_path=[PLINK path] # folder where PLINK executable is
 
 # Genotype data
 vcf_path=["Path to input .vcf files"]
-
-# GTP file
-gtp=[File with genotype IDs]
 
 # HapMap variant list
 hapmap3=[File with HapMap SNP IDs]
@@ -65,8 +63,7 @@ NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \
 --snpfilter ${hapmap3} \
 --cohort_name ${cohort_name} \
 --genome_build ${genome_build} \
---gtp ${gtp} \
 --output_dir ${output_path}  \
---plink2_executable /gpfs/space/GI/GV/Projects/eQTLGenPhase2/temp_fix_offline_files/input/eQTLGenP2OfflineFiles/1_DataQC_additional_files/plink_executables/plink2 \
+--plink2_executable ${plink_path}/plink2 \
 -profile slurm,singularity \
 -resume

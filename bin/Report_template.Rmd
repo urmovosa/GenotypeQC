@@ -38,17 +38,19 @@ library(ggplot2)
 library(stringr)
 
 cov <- fread("CovariatePCs.txt", keepLeadingZeros = TRUE, colClasses = list(character = c(1)))
+gen_pc_cols <- grep("^GenPC", colnames(cov), value = TRUE)
+extra_cov_cols <- setdiff(colnames(cov), c("SampleID", gen_pc_cols))
 nr_add_cov <- 0
 ```
 
-`DataQC` pipeline has prepared `r ncol(cov) - 1` covariates: 10 first genetic PCs`r if (ncol(cov) > 111){ab <- ','}else{ab <- ' and'}; ab` 100 first expression PCs`r if (ncol(cov)> 111){outp <- paste0(' and ', ncol(cov) - 111, ' additional covariate(s).')} else {outp <- '.'}; outp`
+`DataQC` pipeline has prepared `r length(gen_pc_cols)` genetic principal components`r if (length(extra_cov_cols) > 0){paste0(' and ', length(extra_cov_cols), ' additional covariate(s).')} else {'.'}`
 
-`r if (ncol(cov) > 111){outp <- paste0('The names of additional covariates are: ', paste(colnames(cov)[-c(1:111)], collapse = ", "), '.'); outp}`
+`r if (length(extra_cov_cols) > 0){outp <- paste0('The names of additional covariates are: ', paste(extra_cov_cols, collapse = ", "), '.'); outp}`
 
-```{r, message = FALSE, eval = ncol(cov) > 111, warning = FALSE, echo = FALSE}
+```{r, message = FALSE, eval = length(extra_cov_cols) > 0, warning = FALSE, echo = FALSE}
 cov_specific <- melt(cov, id.vars = "SampleID")
 colnames(cov_specific) <- c("SampleID", "covariate", "value")
-cov_specific <- cov_specific[!(str_detect(cov_specific$covariate, "GenPC") | str_detect(cov_specific$covariate, "ExpPC")), ]
+cov_specific <- cov_specific[!str_detect(cov_specific$covariate, "GenPC"), ]
 
 cov_specific$covariate <- as.character(cov_specific$covariate)
 warning("COV SPECIFIC!!!")
@@ -77,7 +79,7 @@ ggplot(cov_specific, aes(x = value)) + geom_histogram(colour = "white") + facet_
 `r if (nr_add_cov == 0) {"\\end{comment}"}`
 
 `r if (nr_add_cov > 0) {"\\begin{comment}"}`
-**Fig 1. Histograms for additional covariates.** Not available, there are no additional covariates prepared on top of genotype PCs and expression PCs.
+**Fig 1. Histograms for additional covariates.** Not available, there are no additional covariates prepared on top of the genotype PCs.
 `r if (nr_add_cov > 0) {"\\end{comment}"}`
 
 ## Genotype QC report
@@ -676,7 +678,7 @@ The files `AssignedPopulations.txt` and `1000G_PC_projections.txt` have been wri
 
 ### Individual genetic outliers in the target population
 
-Here we conduct PCA on the genotypes of eQTL samples only and investigate if there are any individual outliers. These are samples which have the same ancestry as bulk of the samples, however still show somewhat different genetic makeup. This might be due to considerable population stratification (different populations or ethnicities in the same superpopulation) or due to technical reasons. By default, we remove clear outliers.
+Here we conduct PCA on the QC-passed genotype samples and investigate if there are any individual outliers. These are samples which have the same ancestry as bulk of the samples, however still show somewhat different genetic makeup. This might be due to considerable population stratification (different populations or ethnicities in the same superpopulation) or due to technical reasons. By default, we remove clear outliers.
 
 #### Outlier samples
 
@@ -702,7 +704,7 @@ In case of doubt please contact the lead analyst(s) for advice and we will inves
 
 ![**Fig 8. PCA with all samples, outliers outlined with red.** Different shades of red indicate different classes of outliers: difference in SD from mean of PC1 and PC2 (pink), statistic of outlierness S (red), or both (dark red). Dashed lines indicate the SD thresholds to consider samples to outliers.](outputfolder_gen/gen_plots/PCA_outliers.png)  
 
-![**Fig 9. PCA with all samples, outliers removed.** You should not see any dramatic outliers or clusters on the first few PCs any more. These are the PCs which will be used as covariates in the eQTL meta-analysis.](outputfolder_gen/gen_plots/Target_PCs_postQC.png)
+![**Fig 9. PCA with all samples, outliers removed.** You should not see any dramatic outliers or clusters on the first few PCs any more. These are the PCs that can be used as covariates in downstream genotype-based analyses.](outputfolder_gen/gen_plots/Target_PCs_postQC.png)
 
 If you still observe clusters in the data, that could indicate that you still have different genotype batches in the data. If you know the genotype batches and splitting the data is unoptimal, you should specify the batch as additional covariate, using `--AdditionalCovariates` argument.
 

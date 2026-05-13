@@ -4,7 +4,7 @@ process ConvertAndFilterVcf {
 
 input:
   tuple path(vcf), val(s_stat), val(sd_thresh), path(ExclusionList), \
-      path(InclusionList), val(genome_build), path(genotype_phenotype), path(snplist),
+      path(InclusionList), val(genome_build), path(snplist),
   val(plink2_executable)
 
 output:
@@ -32,7 +32,7 @@ process GenotypeQC {
 
     input:
   tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), path(ExclusionList), \
-      path(InclusionList), val(genome_build), path(genotype_phenotype), path(snplist)
+      path(InclusionList), val(genome_build), path(snplist)
       file(fam_annot)
       file(plink_executable)
       file(plink2_executable)
@@ -68,7 +68,6 @@ process GenotypeQC {
     --SD_threshold ${sd_thresh} \
     --hwe_threshold ${hwe_threshold} \
     --qc_maf_threshold ${qc_maf_threshold} \
-    --gen_phe ${genotype_phenotype} \
     --inclusion_list "${InclusionList}" \
     --exclusion_list "${ExclusionList}" \
     --output outputfolder_gen \

@@ -11,7 +11,6 @@ def helpMessage() {
     The typical command for running the pipeline is as follows:
     nextflow run main.nf \
         --bfile EstBB_HT12v3\
-        --gtp gte_EstBB_HT12v3.txt\
         --cohort_name EstBB_HT12v3\
         --genome_build GRCh37\
         --output_dir EstBB_HT12v3_GenoQc\
@@ -24,7 +23,6 @@ def helpMessage() {
       --bfile                       Path to unimputed genotype files in plink bed/bim/fam format (without extensions bed/bim/fam). Required if --vcf is not provided.
       --vcf                         Path to per-chromosome VCF input files. Required if --bfile is not provided.
       --fam                         Optional path to a plink fam file. This is especially helpful for sex annotation of samples in VCF files.
-      --gtp                         Genotype-to-expression linking file. Tab-delimited, no header. First column: sample ID for genotype data. Can be used to filter samples from the analysis.
       --output_dir                  Path to the output directory.
       --qc_out_s                    "Outlierness" score threshold for excluding ethnic outliers. Defaults to 0.4 but it should be adjusted according to visual inspection.
       --qc_out_sd                   Threshold for declaring samples outliers based on genetic PC1 and PC2 SD from mean. Defaults to 3 and should be adjusted according to visual inspection.
@@ -104,11 +102,6 @@ if (params.fam != '') {
     .set { fam_annot_ch }
 
 }
-
-Channel
-    .fromPath(params.gtp)
-    .ifEmpty { exit 1, "Input GTP file not found!" }
-    .set { gtp_ch }
 
 Channel
     .fromPath(params.report_template)
@@ -219,7 +212,6 @@ summary['VCF INFO field']           = params.vcf_imp_field
 summary['VCF genotype INFO field']  = params.vcf_genotype_field
 summary['QC S threshold']           = params.qc_out_s
 summary['QC SD threshold']          = params.qc_out_sd
-summary['GTP file']                 = params.gtp
 summary['SNP filter filter']        = params.snpfilter
 summary['Max Memory']               = params.max_memory
 summary['Max CPUs']                 = params.max_cpus
@@ -255,7 +247,6 @@ workflow {
       .combine(exclusion_list_ch)
       .combine(inclusion_list_ch)
       .combine(genome_build_ch)
-      .combine(gtp_ch)
       .combine(snpfilter_ch)
       .combine(plink2_cmd_ch)
    
@@ -289,7 +280,6 @@ workflow {
       .combine(exclusion_list_ch)
       .combine(inclusion_list_ch)
       .combine(genome_build_ch)
-      .combine(gtp_ch)
       .combine(snpfilter_ch)
 
   GENOTYPEQC(

@@ -55,7 +55,6 @@ docker run --rm -it \
   -v /absolute/path/to/input:/input:ro \
   genotypeqc:latest \
   --vcf /input/imputed_vcfs \
-  --gtp /input/gte.txt \
   --cohort_name EstBB_HT12v3 \
   --genome_build GRCh38 \
   --output_dir /workspace/results \
@@ -71,7 +70,6 @@ docker run --rm -it \
   -v /absolute/path/to/input:/input:ro \
   genotypeqc:latest \
   --bfile /input/study_prefix \
-  --gtp /input/gte.txt \
   --cohort_name EstBB_HT12v3 \
   --genome_build GRCh37 \
   --output_dir /workspace/results \
@@ -89,7 +87,6 @@ Notes:
 
 - Per-chromosome genotype files in `.vcf` format (or PLINK bed/bim/fam prefix via `--bfile`). Genome build has to be in **hg18/GRCh36**, **hg19/GRCh37 (default)** or **hg38/GRCh38**. Pathname extension using globbing is allowed (using `*` or `?`), but the path should be provided without pathway extension.
 - It is advisable to supply a `.fam` file that also includes observed sex for all samples (format: males=1, females=2), so the pipeline does an extra check on that. However, if this information is not available for all samples, the pipeline skips this check.
-- Genotype-to-phenotype linking file (gtp). Tab-delimited file, no header, 2 columns: sample ID in genotype data, corresponding sample ID in gene expression data.
 
 ### Required inputs
 
@@ -100,8 +97,6 @@ Notes:
 `--bfile`                       Path prefix to unimputed genotype files in PLINK bed/bim/fam format (without extensions). Required if `--vcf` is not provided.
 
 `--genome_build`                Genome build of the cohort. Either hg18, GRCh36, hg19, GRCh37, hg38 or GRCh38. Defaults to hg19.
-
-`--gtp`                         Genotype-to-expression linking file. Tab-delimited, no header. First column: sample ID for genotype data. Second column: corresponding sample ID for gene expression data. Can be used to filter samples from the analysis.
 
 `--output_dir`                  Path to the output directory. Defaults to `results`.
     
@@ -125,7 +120,7 @@ There are some arguments which can be used to adjust certain outlier detection t
 
 Optional arguments:
 
-`--additional_covariates` Tab-separated file with additional external covariates deemed to be relevant for eQTL mapping in given dataset. First column must have header "SampleID" and following columns must include corresponding covariates with informative headers (E.g. "GenotypeBatch", etc.). Categorical covariates must be specified in the text format (E.g. "Batch1", "Batch2", "Batch3"), not encoded as numbers. Pipeline does one-hot encoding for you. Numerical covariates are allowed as well. If specified, this file should include covariate information for each eQTL sample which passes QC and NAs are not allowed. 
+`--additional_covariates` Tab-separated file with additional external covariates relevant for downstream genotype-based analyses in the dataset. First column must have header "SampleID" and following columns must include corresponding covariates with informative headers (E.g. "GenotypeBatch", etc.). Categorical covariates must be specified in the text format (E.g. "Batch1", "Batch2", "Batch3"), not encoded as numbers. Pipeline does one-hot encoding for you. Numerical covariates are allowed as well. If specified, this file should include covariate information for each QC-passed sample and NAs are not allowed. 
 
 `--inclusion_list` File with the genotype IDs to keep in the analysis (one per row). Useful for e.g. keeping in only the samples which have part of the biobank, etc. By default, pipeline keeps all samples in. No header needed.
 
@@ -193,9 +188,6 @@ nextflow_path=[Nextflow path] # folder where Nextflow executable is
 # Genotype data
 vcf_path=["Path to input .vcf files"]
 
-# GTP file
-gtp=[File with genotype IDs]
-
 # HapMap variant list
 hapmap3=[File with HapMap SNP IDs]
 
@@ -230,7 +222,6 @@ NXF_VER=25.09.2-edge ${nextflow_path}/nextflow run main.nf \
 --snpfilter ${hapmap3} \
 --cohort_name ${cohort_name} \
 --genome_build ${genome_build} \
---gtp ${gtp} \
 --output_dir ${output_path}  \
 --plink2_executable /gpfs/space/GI/GV/Projects/eQTLGenPhase2/temp_fix_offline_files/input/eQTLGenP2OfflineFiles/1_DataQC_additional_files/plink_executables/plink2 \
 -profile slurm,singularity \

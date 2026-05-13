@@ -154,6 +154,14 @@ standardize_chr_labels <- function(chromosomes) {
   chr
 }
 
+qc_summary_row <- function(stage, n_snps, n_samples) {
+  data.frame(
+    stage = stage,
+    Nr_of_SNPs = n_snps,
+    Nr_of_samples = n_samples
+  )
+}
+
 # Genome build validation using a sample of HapMap variants
 check_genome_build <- function(target_bed_obj, genome_build) {
   validation_path <- file.path("data", "validation_snps.tsv")
@@ -322,8 +330,6 @@ option_list <- list(
     help = "Name of the target genotype file (bed/bim/fam format). Required file extension: .bed."),
     make_option(c("-f", "--fam"), type = "character", default = NULL,
     help = "Path to a separate fam file. Has priority over fam associated with --target_bed"),
-    make_option(c("-g", "--gen_phe"), type = "character",
-    help = "Tab-delimited genotype-to-phenotype sample ID linking file."),
     make_option(c("-s", "--sample_list"), type = "character",
     help = "Path to the file listing unrelated samples for reference data (tab-delimited .txt)."),
     make_option(c("-p", "--pops"), type = "character",
@@ -551,17 +557,7 @@ if (!valid_chromosome_count) {
 system(paste0(PLINK2, " --bfile ", bed_simplepath, " --threads 4 --freq 'cols=+pos' --out targetfile"))
 system("gzip targetfile.afreq --force")
 
-# eQTL samples
-gte <- fread(args$gen_phe, sep = "\t", header = FALSE,
-             keepLeadingZeros = TRUE,
-             colClasses = "character")
-
-summary_table <- data.frame(stage = "Raw file", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
-
-if (nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]) < 100) {
-  stop("Less than 100 samples are in genotype-to-expression file!")
-}
+summary_table <- qc_summary_row("Raw file", target_bed$ncol, target_bed$nrow)
 
 # Prepare and normalise fam file
 #
@@ -603,35 +599,13 @@ if (args$inclusion_list != "" && args$inclusion_list != "EmpiricalProbeMatching_
   samples_to_include <- fam[fam$`sample.ID` %in% inc_list$V1, ]
   message("Sample inclusion filter active!")
 
-  temp_QC <- data.frame(stage = "Samples in inclusion list",
-                        Nr_of_SNPs = target_bed$ncol,
-                        Nr_of_samples = nrow(samples_to_include),
-                        Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.ID`, ]))
+  temp_QC <- qc_summary_row("Samples in inclusion list", target_bed$ncol, nrow(samples_to_include))
   summary_table <- rbind(summary_table, temp_QC)
 }
 
-## Keep in only samples which are present in genotype-to-expression file AND additional up to 5000 samples (better phasing)
-samples_to_include_gte <- fam[fam$`sample.ID` %in% gte$V1, ]
-
-if (exists("samples_to_include")) {
-  print(table(samples_to_include_gte$`sample.ID` %in% samples_to_include$`sample.ID`))
-  samples_to_include_gte <- samples_to_include_gte[samples_to_include_gte$`sample.ID` %in% samples_to_include$`sample.ID`, ]
-  fam <- fam[fam$`sample.ID` %in% samples_to_include$`sample.ID`, ]
+if (!exists("samples_to_include")) {
+  samples_to_include <- fam
 }
-
-samples_to_include_temp <- samples_to_include_gte
-
-if (exists("samples_to_include") && nrow(samples_to_include) > 0) {
-  samples_to_include <- samples_to_include[samples_to_include$`sample.ID` %in% samples_to_include_temp$`sample.ID`, ]
-  print(nrow(samples_to_include))
-} else {
-  samples_to_include <- samples_to_include_temp
-}
-
-temp_QC <- data.frame(stage = "Samples in genotype-to-phenotype file", Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = nrow(samples_to_include),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.ID`, ]))
-summary_table <- rbind(summary_table, temp_QC)
 
 # Remove samples which are in the exclusion list
 if (args$exclusion_list != "" && args$exclusion_list != "EmpiricalProbeMatching_AffyU219.txt") {
@@ -643,11 +617,10 @@ if (args$exclusion_list != "" && args$exclusion_list != "EmpiricalProbeMatching_
 
 fwrite(data.table(`#FID` = '0', `IID` = samples_to_include$`sample.ID`), "SamplesToInclude.txt", sep = "\t", quote = FALSE, col.names = TRUE, row.names = FALSE)
 
-temp_QC <- data.frame(stage = "Samples after removing exclusion list", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = nrow(samples_to_include),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.ID`, ]))
+temp_QC <- qc_summary_row("Samples after removing exclusion list", target_bed$ncol, nrow(samples_to_include))
 summary_table <- rbind(summary_table, temp_QC)
 
-# Remove samples not in GTE + 5k samples
+# Apply the retained sample list before SNP QC.
 system(paste0(PLINK2, " --bfile ", bed_simplepath, " --fam fam_normalized.fam",
 " --output-chr 26 --keep SamplesToInclude.txt --geno 0.05 --make-bed --threads 4 --out ", bed_simplepath, "_filtered"))
 
@@ -699,7 +672,7 @@ check_genome_build(
 )
 
 temp_QC <- data.frame(stage = paste0("SNP CR>0.95; HWE P>", args$hwe_threshold, "; MAF>", args$qc_maf_threshold, "; GENO<0.05; MIND<0.05"), Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
+)
 
 summary_table <- rbind(summary_table, temp_QC)
 
@@ -789,10 +762,7 @@ if ("X" %in% sex_check_data_set_chromosomes) {
   ## Annotate samples who have clear sex
 
   sexcheck$F_PASS <- !(sexcheck$F > 0.2 & sexcheck$F < 0.8)
-  temp_QC <- data.frame(stage = "Sex check (0.2<F<0.8)",
-                        Nr_of_SNPs = target_bed$ncol,
-                        Nr_of_samples = sum(sexcheck$F_PASS),
-                        Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% sexcheck[sexcheck$F_PASS == TRUE, ]$IID, ]))
+  temp_QC <- qc_summary_row("Sex check (0.2<F<0.8)", target_bed$ncol, sum(sexcheck$F_PASS))
   summary_table <- rbind(summary_table, temp_QC)
 
   sexcheck$MATCH_PASS <- case_when(sexcheck$PEDSEX == 0 ~ T,
@@ -803,10 +773,7 @@ if ("X" %in% sex_check_data_set_chromosomes) {
 
   if (any(sexcheck$PEDSEX %in% c(1, 2))) {
 
-    temp_QC <- data.frame(stage = "Sex check (reported and genetic sex mismatch)",
-                          Nr_of_SNPs = target_bed$ncol,
-                          Nr_of_samples = sum(sexcheck$PASS),
-                          Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% sexcheck[sexcheck$PASS == TRUE, ]$IID, ]))
+    temp_QC <- qc_summary_row("Sex check (reported and genetic sex mismatch)", target_bed$ncol, sum(sexcheck$PASS))
     summary_table <- rbind(summary_table, temp_QC)
 
   } else {
@@ -864,8 +831,7 @@ system(paste0("mv ", bed_simplepath, "_QC_QC.fam ", bed_simplepath, "_QC.fam"))
 target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
 target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
 
-temp_QC <- data.frame(stage = "Removed X/Y", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = nrow(target_bed$fam),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
+temp_QC <- qc_summary_row("Removed X/Y", target_bed$ncol, nrow(target_bed$fam))
 summary_table <- rbind(summary_table, temp_QC)
 
 # Do heterozygosity check
@@ -921,9 +887,7 @@ if (length(indices_of_het_failed_samples) > 0) {
 het_s <- data.frame(ID = target_bed$.fam$`sample.ID`, FAMID = target_bed$.fam$`family.ID`)
 het_s <- het_s[!het_s$ID %in% het_fail_samples$IID, ]
 
-temp_QC <- data.frame(stage = "Excess heterozygosity (mean+/-3SD)", Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = length(indices_of_het_passed_samples),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% het_s$ID, ]))
+temp_QC <- qc_summary_row("Excess heterozygosity (mean+/-3SD)", target_bed$ncol, length(indices_of_het_passed_samples))
 
 summary_table <- rbind(summary_table, temp_QC)
 
@@ -1135,10 +1099,6 @@ related <- snp_plinkKINGQC(
   extra.options = paste0("--remove ", het_failed_samples_out_path)
 )
 
-# Filter in only related individuals from genotype-to-expression file
-
-related <- related[related$IID1 %in% gte$V1 & related$IID2 %in% gte$V1, ]
-
 fwrite(related, "related.txt", sep = "\t", quote = FALSE, row.names = FALSE)
 
 # Remove samples that are related to each other
@@ -1184,14 +1144,7 @@ if (length(related_individuals) > 0) {
     # Get the vertex with the least amount of degrees (edges)
     least_vertex_samples <- names(degrees_named)[min(degrees_named) == degrees_named]
 
-    # Prioritize vertices which are in genotype-to-expression file
-    if (length(least_vertex_samples[least_vertex_samples %in% gte$V1]) > 0) {
-      # if there are multiple related sample IDs from GTE, then take just first
-      curr_vertex <- least_vertex_samples[least_vertex_samples %in% gte$V1][1]
-    } else {
-      # if there are multiple related sample IDs (not in GTEs), then take just first
-      curr_vertex <- least_vertex_samples[1]
-    }
+    curr_vertex <- sort(least_vertex_samples)[1]
 
     # Get all vertices that have an edge with curr_vertex
     related_vertices <- names(relatedness_graph[curr_vertex][relatedness_graph[curr_vertex] > 0])
@@ -1252,9 +1205,10 @@ if (length(samples_to_remove_due_to_relatedness) > 0) {
   indices_of_passed_samples <- rows_along(target_bed)
 }
 
-temp_QC <- data.frame(stage = paste0("Relatedness for eQTL samples: thr. KING>", args$king_threshold), Nr_of_SNPs = target_bed$ncol,
-  Nr_of_samples = length(indices_of_passed_samples),
-  Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% het_s[!het_s$ID %in% samples_to_remove_due_to_relatedness, ]$ID, ])
+temp_QC <- qc_summary_row(
+  paste0("Relatedness: thr. KING>", args$king_threshold),
+  target_bed$ncol,
+  length(indices_of_passed_samples)
 )
 summary_table <- rbind(summary_table, temp_QC)
 
@@ -1334,8 +1288,7 @@ indices_of_passed_samples <- indices_of_passed_samples[PCs$outlier == "no"]
 samples_to_include <- data.frame(family.ID = target_bed$.fam$`family.ID`[indices_of_passed_samples], sample.IDD2 = target_bed$.fam$sample.ID[indices_of_passed_samples])
 
 temp_QC <- data.frame(stage = paste0("Outlier samples: thr. S>", Sthresh, " PC1/PC2 SD deviation thresh ", args$SD_threshold), Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = nrow(samples_to_include),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.IDD2`, ]))
+Nr_of_samples = nrow(samples_to_include))
 summary_table <- rbind(summary_table, temp_QC)
 
 fwrite(data.table::data.table(samples_to_include), "SamplesToInclude.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
@@ -1427,19 +1380,20 @@ ggsave(paste0(args$output, "/gen_plots/Target_PCs_scree_postQC.png"), type = "ca
 ggsave(paste0(args$output, "/gen_plots/Target_PCs_scree_postQC.pdf"), height = 5, width = 9, units = "in", dpi = 300)
 
 
-# Count samples in overlapping with GTE
+# Count final samples after genotype QC.
 final_samples <- fread(paste0(args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation.fam"), header = FALSE,
                        keepLeadingZeros = TRUE, colClasses = list(character = c(1,2)))
 
-temp_QC <- data.frame(stage = "QCd samples overlapping with genotype-to-expression file and SNP QC filters on full dataset",
-Nr_of_SNPs = bed_qc$ncol,
-Nr_of_samples = nrow(final_samples),
-Nr_of_eQTL_samples = nrow(final_samples[final_samples$V2 %in% gte$V1, ]))
+temp_QC <- qc_summary_row(
+  "QCd samples after SNP QC filters on full dataset",
+  bed_qc$ncol,
+  nrow(final_samples)
+)
 summary_table <- rbind(summary_table, temp_QC)
 
 # Write out final summary
 message("Write out final sample summary table.")
-colnames(summary_table) <- c("Stage", "Nr. of SNPs", "Nr. of genotype samples", "Nr. of eQTL samples")
+colnames(summary_table) <- c("Stage", "Nr. of SNPs", "Nr. of genotype samples")
 fwrite(summary_table, paste0(args$output, "/gen_data_summary/summary_table.txt"), sep = "\t", quote = FALSE)
 
 system("rm *.bed", wait = TRUE, intern = FALSE)
