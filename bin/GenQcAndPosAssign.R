@@ -154,6 +154,7 @@ standardize_chr_labels <- function(chromosomes) {
   chr
 }
 
+# Keep QC summary row schema across the filtering stages.
 qc_summary_row <- function(stage, n_snps, n_samples) {
   data.frame(
     stage = stage,
@@ -162,9 +163,75 @@ qc_summary_row <- function(stage, n_snps, n_samples) {
   )
 }
 
-# Genome build validation using a sample of HapMap variants
+# Read plink2 allele frequency output by header name so extra columns (newer formats) do not break parsing.
+read_plink2_afreq <- function(path) {
+  afreq <- fread(path, data.table = FALSE)
+
+  if ("#CHROM" %in% names(afreq)) {
+    names(afreq)[names(afreq) == "#CHROM"] <- "chr"
+  }
+  if ("POS" %in% names(afreq)) {
+    names(afreq)[names(afreq) == "POS"] <- "pos"
+  }
+
+  required_cols <- c("chr", "pos", "ID", "REF", "ALT", "ALT_FREQS", "OBS_CT")
+  missing_cols <- setdiff(required_cols, names(afreq))
+  if (length(missing_cols) > 0) {
+    stop(sprintf(
+      "Allele frequency file '%s' is missing required columns: %s",
+      path,
+      paste(missing_cols, collapse = ", ")
+    ))
+  }
+
+  afreq[, required_cols, drop = FALSE]
+}
+
+# Handle empty filter files.
+is_active_sample_filter <- function(path, default_basename = NULL) {
+  if (is.null(path) || !nzchar(path)) {
+    return(FALSE)
+  }
+
+  if (!file.exists(path)) {
+    stop(sprintf("Sample filter file not found: %s", path))
+  }
+
+  if (!is.null(default_basename) && basename(path) == default_basename) {
+    return(FALSE)
+  }
+
+  isTRUE(file.info(path)$size > 0)
+}
+
+# Resolve bundled datafiles location (workdir or script location).
+resolve_bundled_data_path <- function(filename) {
+  cli_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", cli_args, value = TRUE)
+  script_dir <- NULL
+
+  if (length(file_arg) > 0) {
+    script_path <- sub("^--file=", "", file_arg[1])
+    script_dir <- dirname(normalizePath(script_path, winslash = "/", mustWork = TRUE))
+  }
+
+  candidates <- c(
+    file.path("data", filename),
+    if (!is.null(script_dir)) file.path(script_dir, "..", "data", filename)
+  )
+
+  for (candidate in unique(candidates)) {
+    if (!is.na(candidate) && file.exists(candidate)) {
+      return(normalizePath(candidate, winslash = "/", mustWork = TRUE))
+    }
+  }
+
+  file.path("data", filename)
+}
+
+# Validate the genome build of the input data with a set of HapMap3 variants.
 check_genome_build <- function(target_bed_obj, genome_build) {
-  validation_path <- file.path("data", "validation_snps.tsv")
+  validation_path <- resolve_bundled_data_path("validation_snps.tsv")
   if (!file.exists(validation_path)) {
     stop(sprintf(
       "Genome build validation failed: validation variants file not found at %s.",
@@ -401,6 +468,13 @@ if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numer
   stop()
 }
 
+if (is.null(args$liftover_path) || !nzchar(args$liftover_path)) {
+  stop("A path to the UCSC liftOver executable must be provided via --liftover_path.")
+}
+
+liftover_executable <- normalizePath(args$liftover_path, winslash = "/", mustWork = TRUE)
+liftover_bigsnpr <- file.path(".", R.utils::getRelativePath(liftover_executable))
+
 # Map genome builds to build codes.
 build_code <- "b37"
 ucsc_code <- "hg19"
@@ -422,9 +496,10 @@ if (args$genome_build %in% c("hg19", "GRCh37")) {
   stop(sprintf("Genome build %s is not recognized as an available genome build!", args$genome_build))
 }
 
-# Reference analysis is anchored on hg38. Only lift if input is hg18/hg19.
-analysis_ucsc_code <- "hg38"
-needs_liftover_to_hg38 <- ucsc_code %in% c("hg18", "hg19")
+# The downloaded bigsnpr 1000G reference is in hg19 coordinates.
+reference_ucsc_code <- "hg19"
+needs_liftover_to_reference <- ucsc_code != reference_ucsc_code
+needs_liftover_from_reference <- ucsc_code != reference_ucsc_code
 
 bed_simplepath <- stringr::str_replace(args$target_bed, ".bed", "")
 
@@ -499,7 +574,7 @@ if (file.exists(paste0(ref_1000g_prefix, ".bed"))
   bedfile <- download_1000G(dirname(ref_1000g_prefix))
 }
 
-## Chain files for LiftOver (only used when lifting hg18/hg19 -> hg38)
+## Chain files for LiftOver (used when input and reference builds differ)
 chain_path <- args$chain_path
 if (file.exists(paste0(chain_path, "/hg19ToHg38.over.chain.gz")) &
     file.exists(paste0(chain_path, "/hg38ToHg19.over.chain.gz"))) {
@@ -509,18 +584,17 @@ if (file.exists(paste0(chain_path, "/hg19ToHg38.over.chain.gz")) &
 ## Calculate AFs for reference data
 system(paste0(PLINK2, " --bfile ", ref_1000g_prefix, " --threads 4 --freq 'cols=+pos' --out 1000Gref"))
 
-if (needs_liftover_to_hg38) {
-  target_frequencies <- fread("1000Gref.afreq", sep="\t", data.table=F, header=T,
-                 col.names=c("chr", "pos", "ID", "REF", "ALT", "ALT_FREQS", "OBS_CT"))
+if (needs_liftover_from_reference) {
+  target_frequencies <- read_plink2_afreq("1000Gref.afreq")
 
   if (!is.null(args$chain_path) && args$chain_path != "") {
     target_frequencies_mapped <- snp_modifyBuild2(
-      target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-      from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
+      target_frequencies, liftover_executable,
+      from = reference_ucsc_code, to = ucsc_code, chain_path = chain_path)
   } else {
     target_frequencies_mapped <- snp_modifyBuild(
-      target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-      from = "hg19", to = analysis_ucsc_code)
+      target_frequencies, liftover_executable,
+      from = reference_ucsc_code, to = ucsc_code)
   }
   colnames(target_frequencies_mapped)[1:2] <- c("#CHROM", "POS")
 
@@ -593,7 +667,7 @@ if (!is.null(args$fam) && args$fam != "") {
 fwrite(fam, "fam_normalized.fam", col.names = F, row.names = F, quote = F, sep = "\t")
 
 ## If specified, keep in only samples which are in the sample whitelist
-if (args$inclusion_list != "" && args$inclusion_list != "EmpiricalProbeMatching_AffyHumanExon.txt") {
+if (is_active_sample_filter(args$inclusion_list, "EmpiricalProbeMatching_AffyHumanExon.txt")) {
   inc_list <- fread(args$inclusion_list, header = FALSE,
                     keepLeadingZeros = TRUE, colClasses = "character")
   samples_to_include <- fam[fam$`sample.ID` %in% inc_list$V1, ]
@@ -608,7 +682,7 @@ if (!exists("samples_to_include")) {
 }
 
 # Remove samples which are in the exclusion list
-if (args$exclusion_list != "" && args$exclusion_list != "EmpiricalProbeMatching_AffyU219.txt") {
+if (is_active_sample_filter(args$exclusion_list, "EmpiricalProbeMatching_AffyU219.txt")) {
   exc_list <- fread(args$exclusion_list, header = FALSE,
                     keepLeadingZeros = TRUE, colClasses = "character")
   samples_to_include <- samples_to_include[!samples_to_include$`sample.ID` %in% exc_list$V1, ]
@@ -671,7 +745,10 @@ check_genome_build(
   genome_build = args$genome_build
 )
 
-temp_QC <- data.frame(stage = paste0("SNP CR>0.95; HWE P>", args$hwe_threshold, "; MAF>", args$qc_maf_threshold, "; GENO<0.05; MIND<0.05"), Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
+temp_QC <- qc_summary_row(
+  paste0("SNP CR>0.95; HWE P>", args$hwe_threshold, "; MAF>", args$qc_maf_threshold, "; GENO<0.05; MIND<0.05"),
+  target_bed$ncol,
+  target_bed$nrow
 )
 
 summary_table <- rbind(summary_table, temp_QC)
@@ -705,7 +782,7 @@ if ("X" %in% sex_check_data_set_chromosomes) {
     message("Using predefined pruned variants for sex-check:")
     message(pruned_variants_sex_check)
 
-    if (needs_liftover_to_hg38) {
+    if (needs_liftover_from_reference) {
       variants_sex_check <- fread(
         pruned_variants_sex_check, sep = " ", data.table = FALSE, header = FALSE,
         col.names = c("chr", "pos", "pos.end", "id"))
@@ -714,12 +791,12 @@ if ("X" %in% sex_check_data_set_chromosomes) {
 
       if (!is.null(args$chain_path) && args$chain_path != "") {
         variants_sex_check_new <- snp_modifyBuild2(
-          variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-          from = "hg19", to = analysis_ucsc_code, chain_path = chain_path)
+          variants_sex_check, liftover_executable,
+          from = reference_ucsc_code, to = ucsc_code, chain_path = chain_path)
       } else {
         variants_sex_check_new <- snp_modifyBuild(
-          variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-          from = "hg19", to = analysis_ucsc_code)
+          variants_sex_check, liftover_executable,
+          from = reference_ucsc_code, to = ucsc_code)
       }
 
       variants_sex_check_new$chr <- "23"
@@ -904,16 +981,16 @@ message("Projecting samples to 1000G reference.")
 unrelated_ref_samples <- fread(args$sample_list, keepLeadingZeros = TRUE, colClasses = 'character')
 unrelated_ref_samples <- as.numeric(unrelated_ref_samples$ind.row)
 
-if (needs_liftover_to_hg38 && !is.null(args$chain_path) && args$chain_path != "") {
+if (needs_liftover_to_reference && !is.null(args$chain_path) && args$chain_path != "") {
   message("Using offline version of PCA sample projection function.")
 
   map_new <- setNames(target_bed$map[-3], c("chr", "rsid", "pos", "a1", "a0"))
 
   map_new_lifted <- snp_modifyBuild2(
     map_new,
-    liftOver = R.utils::getRelativePath(args$liftover_path),
+    liftOver = liftover_executable,
     from = ucsc_code,
-    to = analysis_ucsc_code,
+    to = reference_ucsc_code,
     chain_path = chain_path
   )
 
@@ -939,9 +1016,9 @@ if (needs_liftover_to_hg38 && !is.null(args$chain_path) && args$chain_path != ""
     strand_flip = TRUE,
     join_by_pos = TRUE,
     match.min.prop = 0.01,
-    build.new = analysis_ucsc_code,
-    build.ref = analysis_ucsc_code,
-    liftOver = R.utils::getRelativePath(args$liftover_path),
+    build.new = reference_ucsc_code,
+    build.ref = reference_ucsc_code,
+    liftOver = liftover_bigsnpr,
     verbose = TRUE,
     ncores = 4
   )
@@ -959,8 +1036,8 @@ if (needs_liftover_to_hg38 && !is.null(args$chain_path) && args$chain_path != ""
     join_by_pos = TRUE,
     match.min.prop = 0.01,
     build.new = ucsc_code,
-    build.ref = analysis_ucsc_code,
-    liftOver = R.utils::getRelativePath(args$liftover_path),
+    build.ref = reference_ucsc_code,
+    liftOver = liftover_bigsnpr,
     verbose = TRUE,
     ncores = 4
   )

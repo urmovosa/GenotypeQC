@@ -545,8 +545,25 @@ However:
 In both of the cases you should check if the input `.bed/.bim/.fam` files are correct and that there are no errors made in generating and/or processing those. If you do not pinpoint any issues with the input, please contact the lead analyst(s) for advice.
 
 ```{r, message = FALSE, warning = FALSE, echo = FALSE, fig.width = 6, fig.height = 6, fig.align = "center"}
-target <- fread("targetfile.afreq.gz", colClasses=c("character", "integer", "character", "character", "character", "numeric", "integer"))
-ref <- fread("1000Gref.afreq.gz", colClasses=c("character", "integer", "character", "character", "character", "numeric", "integer"))
+# Read plink2 afreq tables by header name so report rendering tolerates format additions.
+read_afreq_table <- function(filepath) {
+  afreq <- fread(filepath)
+  keep_cols <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQS")
+
+  missing_cols <- setdiff(keep_cols, colnames(afreq))
+  if (length(missing_cols) > 0) {
+    stop(sprintf(
+      "Allele-frequency file '%s' is missing required columns: %s",
+      filepath,
+      paste(missing_cols, collapse = ", ")
+    ))
+  }
+
+  afreq[, ..keep_cols]
+}
+
+target <- read_afreq_table("targetfile.afreq.gz")
+ref <- read_afreq_table("1000Gref.afreq.gz")
 
 target <- target[!is.na(target$ALT_FREQS), ]
 target <- target[, c(1:6), with = FALSE]

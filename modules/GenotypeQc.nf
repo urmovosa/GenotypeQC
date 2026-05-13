@@ -34,8 +34,8 @@ process GenotypeQC {
   tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), path(ExclusionList), \
       path(InclusionList), val(genome_build), path(snplist)
       file(fam_annot)
-      file(plink_executable)
-      file(plink2_executable)
+      val(plink_executable)
+      val(plink2_executable)
       file(reference_1000g_folder)
       file(chain_path)
 
@@ -71,7 +71,7 @@ process GenotypeQC {
     --inclusion_list "${InclusionList}" \
     --exclusion_list "${ExclusionList}" \
     --output outputfolder_gen \
-    --liftover_path $baseDir/bin/liftOver \
+    --liftover_path "${params.liftover_executable}" \
     $plink_arg \
     $plink2_arg \
     $reference_1000g_prefix_arg \
@@ -155,14 +155,14 @@ process FilterFinalVcf {
       gzip -dc "${snplist}"
     else
       cat "${snplist}"
-    fi | cut -f1 | tail -n +2 > hapmap3_snplist.txt
+    fi | cut -f1 | tail -n +2 > hapmap3_snpids.txt
 
     awk '{print \$2}' ${filtered_fam} | sort -u > iids.txt
 
     # 1) Filter by HapMap3 variants and QC-passed samples.
     bcftools view \
     -S iids.txt \
-    -T hapmap3_snplist.txt \
+    -i "ID=@hapmap3_snpids.txt" \
     -Ob -o \${chr}_subset.bcf \
     ${vcf}
 
@@ -196,7 +196,7 @@ process FilterFinalVcf {
 
     # 5) Standardize variant IDs as CHROM:POS_REF_ALT.
     bcftools annotate \
-    --set-id '%CHROM:%POS_%REF_%ALT' \
+    --set-id '%CHROM:%POS\\_%REF\\_%ALT' \
     -Oz -o \${chr}_filtered.vcf.gz \
     \${chr}_filtered.raw.vcf.gz
 

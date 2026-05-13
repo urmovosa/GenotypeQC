@@ -37,6 +37,7 @@ def helpMessage() {
       --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
       --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
       --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet, or bundled in the single_docker profile.
+      --liftover_executable         Path to the UCSC liftOver executable. Defaults to the bundled Linux binary at $baseDir/bin/liftOver.
       --qc_hwe                      HWE p-value threshold for genotype QC (default: 1e-6).
       --qc_maf                      MAF threshold for genotype QC (default: 0.01).
       --vcf_maf                     MAF threshold for output VCF filtering (default: 0.01).
@@ -52,6 +53,7 @@ def helpMessage() {
 // Define location of Report_template.Rmd
 params.report_template = params.report_template ?: "$baseDir/bin/Report_template.Rmd"
 params.embedded_runtime = params.embedded_runtime ?: false
+params.liftover_executable = params.liftover_executable ?: "$baseDir/bin/liftOver"
 
 if (params.embedded_runtime) {
   params.plink_executable = params.plink_executable ?: "$baseDir/.runtime/bin/plink"
@@ -223,6 +225,7 @@ summary['Plink executable']         = params.plink_executable
 summary['Plink 2 executable']       = params.plink2_executable
 summary['Reference 1000G folder']   = params.reference_1000g_folder
 summary['Chain folder']             = params.chain_path
+summary['LiftOver executable']      = params.liftover_executable
 summary['Embedded runtime']         = params.embedded_runtime
 summary['Output dir']               = params.output_dir
 summary['Container Engine']         = workflow.containerEngine
