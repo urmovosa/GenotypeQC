@@ -308,9 +308,9 @@ workflow {
       filter_vcf_output_files_ch = FILTERFINALVCF.out
       .map { it.flatten() }
       .collect()
-      .map { it.flatten() }
+      .map { list_of_outputs -> tuple(list_of_outputs.flatten()) }
     } else {
-      filter_vcf_output_files_ch = Channel.value([])
+      filter_vcf_output_files_ch = Channel.value(tuple([]))
     }
 
     report_input_ch = GENOTYPEQC.out[0]
@@ -324,6 +324,25 @@ workflow {
     .combine(additional_covariates_ch)
     .combine(filter_vcf_output_files_ch)
     .combine(vcf_genotype_field_ch)
+    .map { row ->
+      def items = row instanceof List ? row : [row]
+      def fixed_inputs = items.take(9)
+      def vcf_filter_outputs = items.size() > 10 ? items[9..-2] : []
+      def genotype_field = items[-1]
+      tuple(
+        fixed_inputs[0],
+        fixed_inputs[1],
+        fixed_inputs[2],
+        fixed_inputs[3],
+        fixed_inputs[4],
+        fixed_inputs[5],
+        fixed_inputs[6],
+        fixed_inputs[7],
+        fixed_inputs[8],
+        vcf_filter_outputs,
+        genotype_field
+      )
+    }
 
     RENDERREPORT(report_input_ch) 
 
