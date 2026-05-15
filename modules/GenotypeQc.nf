@@ -1,11 +1,27 @@
 #!/bin/bash nextflow
 
+process PrepareRuntimeAssets {
+
+input:
+  val(runtime_cache_dir)
+
+output:
+  path("runtime.ready")
+
+script:
+"""
+"$baseDir/scripts/offline_fetch.sh" "${runtime_cache_dir}"
+touch runtime.ready
+"""
+}
+
 process ConvertAndFilterVcf {
 
 input:
   tuple path(vcf), val(s_stat), val(sd_thresh), val(ExclusionList), \
       val(InclusionList), val(genome_build), path(snplist),
   val(plink2_executable)
+  path(runtime_ready)
 
 output:
   tuple path("*_HapMap3_filtered.bed"), path("*_HapMap3_filtered.bim"), path("*_HapMap3_filtered.fam")
@@ -14,56 +30,6 @@ script:
 resolved_plink2_executable = plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
 """
 
-ensure_plink2() {
-  local target="\$1"
-  if [[ -x "\$target" ]]; then
-    "\$target" --version >/dev/null 2>&1
-    local status="\$?"
-    if [[ "\$status" -ne 126 && "\$status" -ne 127 ]]; then
-      printf '%s\n' "\$target"
-      return 0
-    fi
-
-    rm -f "\$target"
-  fi
-
-  local os="\$(uname -s)"
-  local arch="\$(uname -m)"
-  local url=""
-  case "\$os:\$arch" in
-    Darwin:arm64)
-      url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip"
-      ;;
-    Darwin:x86_64)
-      url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip"
-      ;;
-    Linux:x86_64|Linux:amd64)
-      url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_linux_x86_64_20260504.zip"
-      ;;
-    *)
-      echo "Unsupported platform for automatic PLINK 2 download: \$os \$arch" >&2
-      return 1
-      ;;
-  esac
-
-  local target_dir
-  target_dir="\$(dirname "\$target")"
-  mkdir -p "\$target_dir"
-  local archive="\$target_dir/plink2.zip"
-  curl -fsSL "\$url" -o "\$archive"
-  unzip -jo "\$archive" plink2 -d "\$target_dir" >/dev/null
-  rm -f "\$archive"
-
-  if [[ "\$target" != "\$target_dir/plink2" ]]; then
-    mv -f "\$target_dir/plink2" "\$target"
-  fi
-
-  chmod +x "\$target"
-  printf '%s\n' "\$target"
-}
-
-PLINK2_PATH="\$(ensure_plink2 "${resolved_plink2_executable}")"
-
 chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
 if gzip -t "${snplist}" >/dev/null 2>&1; then
   gzip -dc "${snplist}"
@@ -71,7 +37,7 @@ else
   cat "${snplist}"
 fi | cut -f1 | tail -n +2 > hapmap3_snplist.txt
 
-"\$PLINK2_PATH" \
+"${resolved_plink2_executable}" \
   --vcf ${vcf} \
   --extract hapmap3_snplist.txt \
   --make-bed \
@@ -85,6 +51,7 @@ process GenotypeQC {
     input:
   tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), val(ExclusionList), \
       val(InclusionList), val(genome_build), path(snplist)
+      path(runtime_ready)
       val(fam_annot)
       val(plink_executable)
       val(plink2_executable)
@@ -144,6 +111,7 @@ process MergeBed {
 
     input:
   tuple file(bed), file(bim), file(fam), val(plink2_executable)
+  path(runtime_ready)
       
     output:
       tuple file("chrAll.bed"), file("chrAll.bim"), file("chrAll.fam")
@@ -151,60 +119,10 @@ process MergeBed {
     script:
       resolved_plink2_executable = plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
       """
-      ensure_plink2() {
-        local target="\$1"
-        if [[ -x "\$target" ]]; then
-          "\$target" --version >/dev/null 2>&1
-          local status="\$?"
-          if [[ "\$status" -ne 126 && "\$status" -ne 127 ]]; then
-            printf '%s\n' "\$target"
-            return 0
-          fi
-
-          rm -f "\$target"
-        fi
-
-        local os="\$(uname -s)"
-        local arch="\$(uname -m)"
-        local url=""
-        case "\$os:\$arch" in
-          Darwin:arm64)
-            url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip"
-            ;;
-          Darwin:x86_64)
-            url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip"
-            ;;
-          Linux:x86_64|Linux:amd64)
-            url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_linux_x86_64_20260504.zip"
-            ;;
-          *)
-            echo "Unsupported platform for automatic PLINK 2 download: \$os \$arch" >&2
-            return 1
-            ;;
-        esac
-
-        local target_dir
-        target_dir="\$(dirname "\$target")"
-        mkdir -p "\$target_dir"
-        local archive="\$target_dir/plink2.zip"
-        curl -fsSL "\$url" -o "\$archive"
-        unzip -jo "\$archive" plink2 -d "\$target_dir" >/dev/null
-        rm -f "\$archive"
-
-        if [[ "\$target" != "\$target_dir/plink2" ]]; then
-          mv -f "\$target_dir/plink2" "\$target"
-        fi
-
-        chmod +x "\$target"
-        printf '%s\n' "\$target"
-      }
-
-      PLINK2_PATH="\$(ensure_plink2 "${resolved_plink2_executable}")"
-
       ls chr*_HapMap3_filtered.bed \
       | sed 's/.bed\$//' > mergelist.txt
 
-      "\$PLINK2_PATH" --pmerge-list mergelist.txt bfile --make-bed --out "chrAll"
+      "${resolved_plink2_executable}" --pmerge-list mergelist.txt bfile --make-bed --out "chrAll"
       """
 }
 
@@ -340,6 +258,7 @@ process FilterFinalVcf {
 workflow GENOTYPEQC {
     take:
         data
+    runtime_ready
         fam
         plink
         plink2
@@ -351,6 +270,7 @@ workflow GENOTYPEQC {
     main:
         GenotypeQc_output_ch = GenotypeQC(
           data, 
+          runtime_ready,
           fam,
           plink.ifEmpty { Channel.value(null) }, 
       plink2.ifEmpty { Channel.value(null) }, 
@@ -382,12 +302,25 @@ workflow RENDERREPORT {
 
 }
 
-workflow CONVERTANDFILTERVCF {
+workflow PREPARERUNTIMEASSETS {
     take:
       data
 
     main:
-      VcfFilter_ch = ConvertAndFilterVcf(data)
+      PrepareRuntimeAssets_ch = PrepareRuntimeAssets(data)
+
+    emit:
+      runtime_ready = PrepareRuntimeAssets_ch
+
+}
+
+workflow CONVERTANDFILTERVCF {
+    take:
+      data
+      runtime_ready
+
+    main:
+      VcfFilter_ch = ConvertAndFilterVcf(data, runtime_ready)
 
     emit:
       VcfFilter_output_ch = VcfFilter_ch
@@ -397,9 +330,10 @@ workflow CONVERTANDFILTERVCF {
 workflow MERGEBED {
     take:
       data
+      runtime_ready
 
     main:
-      MergeBed_ch = MergeBed(data)
+      MergeBed_ch = MergeBed(data, runtime_ready)
 
     emit:
       MergeBed_output_ch = MergeBed_ch

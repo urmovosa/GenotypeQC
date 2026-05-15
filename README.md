@@ -6,20 +6,20 @@ Automatic QC pipeline with checks, processing and reporting for genotype data in
 
 The pipeline performs the following main steps:
 
-1. Input harmonization and staging.
-  In VCF mode, each chromosome is converted to a PLINK dataset on the bundled HapMap3 marker subset before merging. In PLINK mode, the workflow starts directly from the supplied bed/bim/fam prefix.
-2. Variant-level QC on the HapMap3 subset.
-  The genotype QC stage applies standard filters for variant missingness, Hardy-Weinberg equilibrium, and minor allele frequency on the QC subset used for ancestry projection and sample-level QC.
-3. Sample-level QC.
-  The workflow applies sample missingness filtering, optional inclusion and exclusion lists, optional sex concordance checks when known sex is supplied in a `.fam` file, heterozygosity outlier detection, and relatedness pruning.
-4. Reference projection and ancestry assessment.
-  Samples are harmonized against the 1000 Genomes reference, lifted between hg19/GRCh37 and hg38/GRCh38 when needed, projected to the reference PCA space, and evaluated for ancestry outliers with both LOF-style outlierness and PC-based thresholds.
-5. Principal component generation and summary outputs.
-  The first 10 genetic principal components are generated for downstream association models, along with summary tables, ancestry projection files, diagnostic plots, and an HTML QC report.
-6. Final QC dataset organization.
-  The QC-passed genotype dataset is written to the standard output folder structure together with sample exclusion summaries and covariate files.
-7. Optional filtered VCF export.
-  When the input is a per-chromosome VCF directory, the workflow also produces final VCF outputs filtered by QC-passed samples, HapMap3-aware sample exclusions, and adjustable HWE, MAF, and imputation-quality thresholds.
+- Genotype QC and filtering:
+  - In VCF mode, converts each chromosome to a PLINK dataset on the bundled HapMap3 marker subset before merging. In PLINK mode, starts directly from the supplied bed/bim/fam prefix.
+  - Applies standard variant QC filtering on the HapMap3 subset used for QC and ancestry projection, including variant missingness, Hardy-Weinberg equilibrium, and minor allele frequency thresholds.
+  - Applies sample-level missingness filtering.
+  - Compares reported and genetic sex when known sex is supplied in a `.fam` file, and removes mismatched or unclear samples.
+  - Removes samples with excess heterozygosity (+/-3 SD from the mean).
+  - Removes related samples so that one sample from each related pair is kept in the data.
+  - Projects samples into the 1000 Genomes reference space, harmonizes between hg19/GRCh37 and hg38/GRCh38 when needed, and flags genetic outliers.
+  - Calculates the first 10 genetic principal components (PCs), used in downstream analyses as covariates to correct for population stratification.
+  - Filters the full imputed dataset to exclude samples and variants failing QC, with adjustable HWE, MAF, and imputation-quality thresholds when VCF input is provided.
+- Additional steps:
+  - Organizes the QCd genotype data into the standard output folder structure.
+  - Writes summary tables, ancestry projection outputs, and covariate files for downstream analysis.
+  - Provides a commented `html` QC report that gives an overview of the quality of the data and supports follow-up decisions.
 
 ## Requirements
 

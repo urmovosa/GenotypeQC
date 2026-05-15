@@ -59,7 +59,7 @@ params.embedded_runtime = params.embedded_runtime ?: false
 params.runtime_cache_dir = params.runtime_cache_dir ?: "$baseDir/.runtime_downloads"
 
 if (params.embedded_runtime) {
-  params.liftover_executable = params.liftover_executable ?: "$baseDir/bin/liftOver"
+  params.liftover_executable = params.liftover_executable ?: "$baseDir/.runtime/bin/liftOver"
   params.plink_executable = params.plink_executable ?: "$baseDir/.runtime/bin/plink"
   params.plink2_executable = params.plink2_executable ?: "$baseDir/.runtime/bin/plink2"
   params.reference_1000g_folder = params.reference_1000g_folder ?: "$baseDir/.runtime/reference_1000g"
@@ -76,7 +76,8 @@ def resolved_plink_executable = params.plink_executable ?: (params.embedded_runt
 def resolved_plink2_executable = params.plink2_executable ?: (params.embedded_runtime ? "$baseDir/.runtime/bin/plink2" : "${params.runtime_cache_dir}/bin/plink2")
 def resolved_reference_1000g_folder = params.reference_1000g_folder ?: (params.embedded_runtime ? "$baseDir/.runtime/reference_1000g" : "${params.runtime_cache_dir}/reference_1000g")
 def resolved_chain_path = params.chain_path ?: (params.embedded_runtime ? "$baseDir/.runtime/chain" : "${params.runtime_cache_dir}/chain")
-def resolved_liftover_executable = params.liftover_executable ?: (params.embedded_runtime ? "$baseDir/bin/liftOver" : "${params.runtime_cache_dir}/bin/liftOver")
+def resolved_liftover_executable = params.liftover_executable ?: (params.embedded_runtime ? "$baseDir/.runtime/bin/liftOver" : "${params.runtime_cache_dir}/bin/liftOver")
+def resolved_runtime_asset_root = params.embedded_runtime ? "$baseDir/.runtime" : params.runtime_cache_dir
 
 // Define set of accepted genome builds:
 def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh38']
@@ -121,6 +122,7 @@ Channel.value(resolved_plink2_executable).set { plink2_executable_ch }
 Channel.value(resolved_plink2_executable).set { plink2_cmd_ch }
 Channel.value(resolved_reference_1000g_folder).set { reference_1000g_ch }
 Channel.value(resolved_chain_path).set { chain_path_ch }
+Channel.value(resolved_runtime_asset_root).set { runtime_asset_root_ch }
 
 Channel
   .fromPath(params.snpfilter, checkIfExists: true)
@@ -221,9 +223,12 @@ summary['Config Profile']           = workflow.profile
 log.info summary.collect { k,v -> "${k.padRight(21)}: $v" }.join("\n")
 log.info "========================================="
 
-include { GENOTYPEQC; GenotypeQC; RENDERREPORT; RenderReport; CONVERTANDFILTERVCF; ConvertAndFilterVcf; MERGEBED; MergeBed; FILTERFINALVCF; FilterFinalVcf} from './modules/GenotypeQc.nf'
+include { PREPARERUNTIMEASSETS; PrepareRuntimeAssets; GENOTYPEQC; GenotypeQC; RENDERREPORT; RenderReport; CONVERTANDFILTERVCF; ConvertAndFilterVcf; MERGEBED; MergeBed; FILTERFINALVCF; FilterFinalVcf} from './modules/GenotypeQc.nf'
 
 workflow {
+
+  PREPARERUNTIMEASSETS(runtime_asset_root_ch)
+  runtime_ready_ch = PREPARERUNTIMEASSETS.out
 
     if (params.vcf != '') {
       genotype_ch = vcf_ch
@@ -236,7 +241,8 @@ workflow {
       .combine(plink2_cmd_ch)
    
       CONVERTANDFILTERVCF(
-        genotype_ch
+        genotype_ch,
+        runtime_ready_ch
         )
 
       merged_inputs_ch = CONVERTANDFILTERVCF.out
@@ -250,7 +256,7 @@ workflow {
         }
         .combine(plink2_cmd_ch)
 
-      MERGEBED(merged_inputs_ch)
+      MERGEBED(merged_inputs_ch, runtime_ready_ch)
 
       genotype_source_ch = MERGEBED.out
     } else {
@@ -269,6 +275,7 @@ workflow {
 
   GENOTYPEQC(
       genotypeqc_input_ch, 
+      runtime_ready_ch,
       fam_annot_ch, 
       plink_executable_ch, 
       plink2_executable_ch, 

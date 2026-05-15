@@ -3,8 +3,6 @@ FROM --platform=linux/amd64 ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MINIFORGE_VERSION=24.11.0-0
 ARG NXF_VER=25.04.8
-ARG PLINK_VERSION=20220402
-ARG PLINK2_VERSION=20221024
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -59,20 +57,8 @@ RUN curl -fsSL https://get.nextflow.io | bash \
 
 COPY . /opt/genotypeqc
 
-RUN mkdir -p /opt/genotypeqc/.runtime/bin /opt/genotypeqc/.runtime/reference_1000g /opt/genotypeqc/.runtime/chain \
- && curl -fsSL -o /tmp/plink.zip \
-       "https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_${PLINK_VERSION}.zip" \
- && unzip -j /tmp/plink.zip plink -d /opt/genotypeqc/.runtime/bin \
- && curl -fsSL -o /tmp/plink2.zip \
-       "https://s3.amazonaws.com/plink2-assets/alpha3/plink2_linux_x86_64_${PLINK2_VERSION}.zip" \
- && unzip -j /tmp/plink2.zip plink2 -d /opt/genotypeqc/.runtime/bin \
- && rm -f /tmp/plink.zip /tmp/plink2.zip \
- && curl -fsSL -o /opt/genotypeqc/.runtime/chain/hg19ToHg38.over.chain.gz \
-       "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz" \
- && curl -fsSL -o /opt/genotypeqc/.runtime/chain/hg38ToHg19.over.chain.gz \
-       "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz" \
- && chmod +x /opt/genotypeqc/.runtime/bin/plink /opt/genotypeqc/.runtime/bin/plink2 /opt/genotypeqc/bin/liftOver /opt/genotypeqc/docker-entrypoint.sh \
- && Rscript -e "library(bigsnpr); download_1000G('/opt/genotypeqc/.runtime/reference_1000g')"
+RUN chmod +x /opt/genotypeqc/docker-entrypoint.sh /opt/genotypeqc/scripts/offline_fetch.sh /opt/genotypeqc/bin/liftOver \
+ && /opt/genotypeqc/scripts/offline_fetch.sh /opt/genotypeqc/.runtime
 
 ENV GENOTYPEQC_HOME=/opt/genotypeqc
 ENV PATH="/opt/genotypeqc/.runtime/bin:/opt/conda/envs/genotypeqc/bin:/opt/conda/bin:/usr/local/bin:${PATH}"

@@ -50,14 +50,29 @@ detect_liftover_url() {
   esac
 }
 
+binary_runs_on_host() {
+  local target="$1"
+  shift || true
+
+  if [[ ! -x "${target}" ]]; then
+    return 1
+  fi
+
+  "${target}" "$@" >/dev/null 2>&1
+  local status="$?"
+  [[ "${status}" -ne 126 && "${status}" -ne 127 ]]
+}
+
 download_zip_binary() {
   local url="$1"
   local target="$2"
   local member="$3"
 
-  if [[ -x "${target}" ]]; then
+  if binary_runs_on_host "${target}" --version; then
     return 0
   fi
+
+  rm -f "${target}"
 
   local target_dir
   target_dir="$(dirname "${target}")"
@@ -72,6 +87,20 @@ download_zip_binary() {
     mv -f "${target_dir}/${member}" "${target}"
     chmod +x "${target}"
   fi
+}
+
+download_executable_if_needed() {
+  local url="$1"
+  local target="$2"
+
+  if binary_runs_on_host "${target}"; then
+    return 0
+  fi
+
+  rm -f "${target}"
+  mkdir -p "$(dirname "${target}")"
+  curl -fsSL "${url}" -o "${target}"
+  chmod +x "${target}"
 }
 
 download_file_if_missing() {
@@ -93,8 +122,7 @@ mkdir -p "${RUNTIME_CACHE_DIR}/bin" \
 download_zip_binary "$(detect_plink2_url)" "${RUNTIME_CACHE_DIR}/bin/plink2" "plink2"
 ln -sf plink2 "${RUNTIME_CACHE_DIR}/bin/plink"
 
-download_file_if_missing "$(detect_liftover_url)" "${RUNTIME_CACHE_DIR}/bin/liftOver"
-chmod +x "${RUNTIME_CACHE_DIR}/bin/liftOver"
+download_executable_if_needed "$(detect_liftover_url)" "${RUNTIME_CACHE_DIR}/bin/liftOver"
 
 download_file_if_missing \
   "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz" \
