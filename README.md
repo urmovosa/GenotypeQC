@@ -1,4 +1,4 @@
-# CVNLINK Genotype QC Pipeline
+# CVDLINK Genotype QC Pipeline
 
 Automatic QC pipeline with checks, processing and reporting for genotype data in .vcf format (or PLINK bed/bim/fam input).
 
