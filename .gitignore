@@ -28,5 +28,4 @@ dag.*.html
 plink/
 *.zip
 .runtime_downloads/
-data/imputed/
 results/

@@ -8,7 +8,6 @@ results/
 .tmp_*/
 singularity_img/
 plink/
-.runtime/
 data/outputfolder_gen/
 data/pipeline_info/
 __pycache__/
