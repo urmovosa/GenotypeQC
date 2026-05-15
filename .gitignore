@@ -17,6 +17,7 @@ __pycache__/
 .nextflow.log.*
 .nextflow.cache/
 work/
+.tmp_*/
 trace.txt
 report.html
 timeline.html
@@ -26,3 +27,6 @@ dag.*.html
 # Non-source files
 plink/
 *.zip
+.runtime_downloads/
+data/imputed/
+results/

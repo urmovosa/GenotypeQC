@@ -47,12 +47,11 @@ RUN /opt/conda/bin/mamba env create -f /tmp/environment.yml \
  && /opt/conda/bin/conda clean -afy \
  && rm -f /tmp/environment.yml
 
-ENV PATH="/opt/conda/envs/eQTLGenPopAssign/bin:/opt/conda/bin:${PATH}"
+ENV PATH="/opt/conda/envs/genotypeqc/bin:/opt/conda/bin:${PATH}"
 ENV NXF_VER="${NXF_VER}"
 
 RUN Rscript -e "install.packages('R.utils', repos = 'https://cloud.r-project.org')" \
- && Rscript -e "remotes::install_version('bigsnpr', version = '1.10.8', dependencies = TRUE, repos = 'https://cloud.r-project.org', upgrade = 'never')" \
- && Rscript -e "if (!requireNamespace('preprocessCore', quietly = TRUE)) { if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos = 'https://cloud.r-project.org'); BiocManager::install('preprocessCore', ask = FALSE, update = FALSE) }"
+ && Rscript -e "remotes::install_version('bigsnpr', version = '1.10.8', dependencies = TRUE, repos = 'https://cloud.r-project.org', upgrade = 'never')"
 
 RUN curl -fsSL https://get.nextflow.io | bash \
  && mv nextflow /usr/local/bin/nextflow \
@@ -76,7 +75,7 @@ RUN mkdir -p /opt/genotypeqc/.runtime/bin /opt/genotypeqc/.runtime/reference_100
  && Rscript -e "library(bigsnpr); download_1000G('/opt/genotypeqc/.runtime/reference_1000g')"
 
 ENV GENOTYPEQC_HOME=/opt/genotypeqc
-ENV PATH="/opt/genotypeqc/.runtime/bin:/opt/conda/envs/eQTLGenPopAssign/bin:/opt/conda/bin:/usr/local/bin:${PATH}"
+ENV PATH="/opt/genotypeqc/.runtime/bin:/opt/conda/envs/genotypeqc/bin:/opt/conda/bin:/usr/local/bin:${PATH}"
 
 WORKDIR /workspace
 

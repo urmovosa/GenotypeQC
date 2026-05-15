@@ -5,15 +5,15 @@ nextflow.enable.dsl = 2
 def helpMessage() {
     log.info"""
     =======================================================
-     GenoDataQC v${workflow.manifest.version}
+  GenotypeQC v${workflow.manifest.version}
     =======================================================
     Usage:
     The typical command for running the pipeline is as follows:
     nextflow run main.nf \
-        --bfile EstBB_HT12v3\
-        --cohort_name EstBB_HT12v3\
+        --bfile cohort_a\
+        --cohort_name cohort_a\
         --genome_build GRCh37\
-        --output_dir EstBB_HT12v3_GenoQc\
+        --output_dir results/cohort_a\
         -profile slurm\
         -resume
 
@@ -28,16 +28,19 @@ def helpMessage() {
       --qc_out_sd                   Threshold for declaring samples outliers based on genetic PC1 and PC2 SD from mean. Defaults to 3 and should be adjusted according to visual inspection.
 
     Optional arguments
-      --inclusion_list              File with sample IDs to restrict to the analysis. Useful for keeping in the inclusion list of the samples. By default, all samples are kept.
-      --exclusion_list              File with sample IDs to remove from the analysis. Useful for removing the ancestry outliers or restricting the genotype data to one superpopulation. Samples are also removed from the inclusion list. By default, all samples are kept.
-      --additional_covariates       File with additional cohort-specific covariates. First column name SampleID is the sample ID. Following columns are named by covariates.  Categorical covariates need to be text-based (e.g. batch1, batch2, etc). 
+      --inclusion_list              File with sample IDs to restrict to the analysis. Useful for keeping only a subset of samples. By default, all samples are kept.
+      --exclusion_list              File with sample IDs to remove from the analysis. Useful for removing ancestry outliers or restricting the genotype data to one superpopulation. Samples are also removed from the inclusion list. By default, no samples are removed.
+      --additional_covariates       File with additional cohort-specific covariates. First column name SampleID is the sample ID. Following columns are named by covariates. Categorical covariates need to be text-based (e.g. batch1, batch2, etc). By default, no extra covariates are added.
       --preselected_sex_check_vars  Path to a plink ranges file that defines which variants to use for the check-sex command. Use this when the automatic selection does not yield satisfactory results.
       --snpfilter                   HapMap3 variant list. Defaults to the bundled list at $baseDir/data/hapmap3_snps.tsv.
-      --plink_executable            Path to plink executable. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
-      --plink2_executable           Path to plink2 executable. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
-      --reference_1000g_folder      Path to 1000g reference folder. By default this is automatically downloaded from internet, or bundled in the single_docker profile.
-      --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. By default these are automatically downloaded from internet, or bundled in the single_docker profile.
-      --liftover_executable         Path to the UCSC liftOver executable. Defaults to the bundled Linux binary at $baseDir/bin/liftOver.
+      --reference_unrelated_samples File with unrelated 1000G reference sample indices. Defaults to the bundled file at $baseDir/data/unrelated_reference_samples_ids.txt.
+      --reference_populations       File with 1000G sample population labels. Defaults to the bundled file at $baseDir/data/1000G_pops.txt.
+      --plink_executable            Path to a PLINK-compatible executable. Defaults to the cached PLINK 2 binary in $baseDir/.runtime_downloads/bin/.
+      --plink2_executable           Path to plink2 executable. Defaults to $baseDir/.runtime_downloads/bin/plink2 for host runs, or the bundled binary in single_docker.
+      --reference_1000g_folder      Path to 1000g reference folder. Defaults to $baseDir/.runtime_downloads/reference_1000g for host runs, or the bundled reference in single_docker.
+      --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. Defaults to $baseDir/.runtime_downloads/chain for host runs, or the bundled files in single_docker.
+      --liftover_executable         Path to the UCSC liftOver executable. Defaults to $baseDir/.runtime_downloads/bin/liftOver for host runs, or the bundled binary in single_docker.
+      --runtime_cache_dir           Host-side cache used for auto-downloaded runtime assets (default: $baseDir/.runtime_downloads).
       --qc_hwe                      HWE p-value threshold for genotype QC (default: 1e-6).
       --qc_maf                      MAF threshold for genotype QC (default: 0.01).
       --vcf_maf                     MAF threshold for output VCF filtering (default: 0.01).
@@ -53,14 +56,27 @@ def helpMessage() {
 // Define location of Report_template.Rmd
 params.report_template = params.report_template ?: "$baseDir/bin/Report_template.Rmd"
 params.embedded_runtime = params.embedded_runtime ?: false
-params.liftover_executable = params.liftover_executable ?: "$baseDir/bin/liftOver"
+params.runtime_cache_dir = params.runtime_cache_dir ?: "$baseDir/.runtime_downloads"
 
 if (params.embedded_runtime) {
+  params.liftover_executable = params.liftover_executable ?: "$baseDir/bin/liftOver"
   params.plink_executable = params.plink_executable ?: "$baseDir/.runtime/bin/plink"
   params.plink2_executable = params.plink2_executable ?: "$baseDir/.runtime/bin/plink2"
   params.reference_1000g_folder = params.reference_1000g_folder ?: "$baseDir/.runtime/reference_1000g"
   params.chain_path = params.chain_path ?: "$baseDir/.runtime/chain"
+} else {
+  params.plink2_executable = params.plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
+  params.plink_executable = params.plink_executable ?: params.plink2_executable
+  params.reference_1000g_folder = params.reference_1000g_folder ?: "${params.runtime_cache_dir}/reference_1000g"
+  params.chain_path = params.chain_path ?: "${params.runtime_cache_dir}/chain"
+  params.liftover_executable = params.liftover_executable ?: "${params.runtime_cache_dir}/bin/liftOver"
 }
+
+def resolved_plink_executable = params.plink_executable ?: (params.embedded_runtime ? "$baseDir/.runtime/bin/plink" : "${params.runtime_cache_dir}/bin/plink2")
+def resolved_plink2_executable = params.plink2_executable ?: (params.embedded_runtime ? "$baseDir/.runtime/bin/plink2" : "${params.runtime_cache_dir}/bin/plink2")
+def resolved_reference_1000g_folder = params.reference_1000g_folder ?: (params.embedded_runtime ? "$baseDir/.runtime/reference_1000g" : "${params.runtime_cache_dir}/reference_1000g")
+def resolved_chain_path = params.chain_path ?: (params.embedded_runtime ? "$baseDir/.runtime/chain" : "${params.runtime_cache_dir}/chain")
+def resolved_liftover_executable = params.liftover_executable ?: (params.embedded_runtime ? "$baseDir/bin/liftOver" : "${params.runtime_cache_dir}/bin/liftOver")
 
 // Define set of accepted genome builds:
 def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh38']
@@ -69,11 +85,8 @@ params.vcf = params.vcf ?: ''
 params.bfile = params.bfile ?: ''
 params.fam = params.fam ?: ''
 params.snpfilter = params.snpfilter ?: "$baseDir/data/hapmap3_snps.tsv"
-
-params.plink_executable = params.plink_executable ?: ''
-params.plink2_executable = params.plink2_executable ?: ''
-params.reference_1000g_folder = params.reference_1000g_folder ?: ''
-params.chain_path = params.chain_path ?: ''
+params.reference_unrelated_samples = params.reference_unrelated_samples ?: "$baseDir/data/unrelated_reference_samples_ids.txt"
+params.reference_populations = params.reference_populations ?: "$baseDir/data/1000G_pops.txt"
 
 if (params.vcf != '') {
 
@@ -93,16 +106,9 @@ if (params.vcf != '') {
 }
 
 if (params.fam != '') {
-
-  Channel
-    .fromPath(params.fam, checkIfExists: true)
-    .set { fam_annot_ch }
-
+  Channel.value(params.fam).set { fam_annot_ch }
 } else {
-
-  Channel.empty()
-    .set { fam_annot_ch }
-
+  Channel.value(params.fam).set { fam_annot_ch }
 }
 
 Channel
@@ -110,50 +116,23 @@ Channel
     .ifEmpty { exit 1, "Input report not found!" }
     .set { report_ch }
 
-if (params.plink_executable) {
-  Channel
-    .fromPath(params.plink_executable)
-    .ifEmpty('EMPTY')
-    .set { plink_executable_ch }
-} else {
-  Channel.empty().set {plink_executable_ch}
-}
-
-if (params.plink2_executable) {
-  Channel
-    .fromPath(params.plink2_executable)
-    .ifEmpty('EMPTY')
-    .set { plink2_executable_ch }
-
-  Channel
-    .fromPath(params.plink2_executable)
-    .ifEmpty('EMPTY')
-    .map { it.toString() }
-    .set { plink2_cmd_ch }
-} else {
-  Channel.empty().set {plink2_executable_ch}
-  Channel.value('plink2').set { plink2_cmd_ch }
-}
-if (params.reference_1000g_folder) {
-  Channel
-    .fromPath(params.reference_1000g_folder)
-    .ifEmpty('EMPTY')
-    .set { reference_1000g_ch }
-} else {
-  Channel.empty().set {reference_1000g_ch}
-}
-if (params.chain_path) {
-  Channel
-    .fromPath(params.chain_path)
-    .ifEmpty('EMPTY')
-    .set { chain_path_ch }
-} else {
-  Channel.empty().set {chain_path_ch}
-}
+Channel.value(resolved_plink_executable).set { plink_executable_ch }
+Channel.value(resolved_plink2_executable).set { plink2_executable_ch }
+Channel.value(resolved_plink2_executable).set { plink2_cmd_ch }
+Channel.value(resolved_reference_1000g_folder).set { reference_1000g_ch }
+Channel.value(resolved_chain_path).set { chain_path_ch }
 
 Channel
   .fromPath(params.snpfilter, checkIfExists: true)
   .set { snpfilter_ch }
+
+Channel
+  .fromPath(params.reference_unrelated_samples, checkIfExists: true)
+  .set { reference_unrelated_samples_ch }
+
+Channel
+  .fromPath(params.reference_populations, checkIfExists: true)
+  .set { reference_populations_ch }
 
 params.qc_out_s = params.qc_out_s ?: 0.4
 params.qc_out_sd = params.qc_out_sd ?: 3
@@ -169,10 +148,9 @@ params.vcf_imp = params.vcf_imp ?: 0.8
 params.vcf_imp_field = params.vcf_imp_field ?: 'R2'
 params.vcf_genotype_field = params.vcf_genotype_field ?: ''
 
-// By default define random non-colliding file names in data folder. If default, these are ignored by corresponding script.
-params.inclusion_list = params.inclusion_list ?: "$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt"
-params.exclusion_list = params.exclusion_list ?: "$baseDir/data/EmpiricalProbeMatching_AffyU219.txt"
-params.additional_covariates = params.additional_covariates ?: "$baseDir/data/1000G_pops.txt"
+params.inclusion_list = params.inclusion_list ?: ''
+params.exclusion_list = params.exclusion_list ?: ''
+params.additional_covariates = params.additional_covariates ?: ''
 
 qc_out_s_ch = Channel.value(params.qc_out_s)
 qc_out_sd_ch = Channel.value(params.qc_out_sd)
@@ -187,9 +165,9 @@ vcf_imp_ch = Channel.value(params.vcf_imp)
 vcf_imp_field_ch = Channel.value(params.vcf_imp_field)
 vcf_genotype_field_ch = Channel.value(params.vcf_genotype_field)
 
-inclusion_list_ch = Channel.fromPath(params.inclusion_list, checkIfExists:true)
-exclusion_list_ch = Channel.fromPath(params.exclusion_list, checkIfExists:true)
-additional_covariates_ch = Channel.fromPath(params.additional_covariates, checkIfExists:true)
+inclusion_list_ch = Channel.value(params.inclusion_list)
+exclusion_list_ch = Channel.value(params.exclusion_list)
+additional_covariates_ch = Channel.value(params.additional_covariates)
 
 if ((params.genome_build in genome_builds_accepted) == false) {
   exit 1, "[Pipeline error] Genome build $params.genome_build not in accepted genome builds: $genome_builds_accepted \n"
@@ -198,10 +176,10 @@ if ((params.genome_build in genome_builds_accepted) == false) {
 
 // Header log info
 log.info """=======================================================
-GenoDataQC v${workflow.manifest.version}"
+GenotypeQC v${workflow.manifest.version}"
 ======================================================="""
 def summary = [:]
-summary['Pipeline Name']            = 'GenotypeDataQC'
+summary['Pipeline Name']            = 'GenotypeQC'
 summary['Pipeline Version']         = workflow.manifest.version
 summary['PLINK bfile']              = params.bfile
 summary['Genome Build']             = params.genome_build
@@ -219,13 +197,17 @@ summary['Max Memory']               = params.max_memory
 summary['Max CPUs']                 = params.max_cpus
 summary['Max Time']                 = params.max_time
 summary['Cohort name']              = params.cohort_name
-if(params.inclusion_list!="$baseDir/data/EmpiricalProbeMatching_AffyHumanExon.txt") summary['Inclusion list'] = params.inclusion_list
-if(params.exclusion_list!="$baseDir/data/EmpiricalProbeMatching_AffyU219.txt") summary['Exclusion list'] = params.exclusion_list
-summary['Plink executable']         = params.plink_executable
-summary['Plink 2 executable']       = params.plink2_executable
-summary['Reference 1000G folder']   = params.reference_1000g_folder
-summary['Chain folder']             = params.chain_path
-summary['LiftOver executable']      = params.liftover_executable
+if(params.inclusion_list) summary['Inclusion list'] = params.inclusion_list
+if(params.exclusion_list) summary['Exclusion list'] = params.exclusion_list
+if(params.additional_covariates) summary['Additional covariates'] = params.additional_covariates
+summary['Plink executable']         = resolved_plink_executable
+summary['Plink 2 executable']       = resolved_plink2_executable
+summary['Reference 1000G folder']   = resolved_reference_1000g_folder
+summary['Reference sample index']   = params.reference_unrelated_samples
+summary['Reference populations']    = params.reference_populations
+summary['Chain folder']             = resolved_chain_path
+summary['LiftOver executable']      = resolved_liftover_executable
+summary['Runtime cache']            = params.runtime_cache_dir
 summary['Embedded runtime']         = params.embedded_runtime
 summary['Output dir']               = params.output_dir
 summary['Container Engine']         = workflow.containerEngine
@@ -291,7 +273,9 @@ workflow {
       plink_executable_ch, 
       plink2_executable_ch, 
       reference_1000g_ch, 
-      chain_path_ch)
+      chain_path_ch,
+      reference_unrelated_samples_ch,
+      reference_populations_ch)
 
     if (params.vcf != '') {
       vcf_filter_input_ch = vcf_ch

@@ -4,6 +4,8 @@
 .nextflow.log.*
 work/
 results/
+.runtime_downloads/
+.tmp_*/
 singularity_img/
 plink/
 .runtime/

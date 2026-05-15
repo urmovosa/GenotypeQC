@@ -3,14 +3,66 @@
 process ConvertAndFilterVcf {
 
 input:
-  tuple path(vcf), val(s_stat), val(sd_thresh), path(ExclusionList), \
-      path(InclusionList), val(genome_build), path(snplist),
+  tuple path(vcf), val(s_stat), val(sd_thresh), val(ExclusionList), \
+      val(InclusionList), val(genome_build), path(snplist),
   val(plink2_executable)
 
 output:
   tuple path("*_HapMap3_filtered.bed"), path("*_HapMap3_filtered.bim"), path("*_HapMap3_filtered.fam")
 
+script:
+resolved_plink2_executable = plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
 """
+
+ensure_plink2() {
+  local target="\$1"
+  if [[ -x "\$target" ]]; then
+    "\$target" --version >/dev/null 2>&1
+    local status="\$?"
+    if [[ "\$status" -ne 126 && "\$status" -ne 127 ]]; then
+      printf '%s\n' "\$target"
+      return 0
+    fi
+
+    rm -f "\$target"
+  fi
+
+  local os="\$(uname -s)"
+  local arch="\$(uname -m)"
+  local url=""
+  case "\$os:\$arch" in
+    Darwin:arm64)
+      url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip"
+      ;;
+    Darwin:x86_64)
+      url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip"
+      ;;
+    Linux:x86_64|Linux:amd64)
+      url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_linux_x86_64_20260504.zip"
+      ;;
+    *)
+      echo "Unsupported platform for automatic PLINK 2 download: \$os \$arch" >&2
+      return 1
+      ;;
+  esac
+
+  local target_dir
+  target_dir="\$(dirname "\$target")"
+  mkdir -p "\$target_dir"
+  local archive="\$target_dir/plink2.zip"
+  curl -fsSL "\$url" -o "\$archive"
+  unzip -jo "\$archive" plink2 -d "\$target_dir" >/dev/null
+  rm -f "\$archive"
+
+  if [[ "\$target" != "\$target_dir/plink2" ]]; then
+    mv -f "\$target_dir/plink2" "\$target"
+  fi
+
+  chmod +x "\$target"
+  printf '%s\n' "\$target"
+}
+
+PLINK2_PATH="\$(ensure_plink2 "${resolved_plink2_executable}")"
 
 chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
 if gzip -t "${snplist}" >/dev/null 2>&1; then
@@ -19,7 +71,7 @@ else
   cat "${snplist}"
 fi | cut -f1 | tail -n +2 > hapmap3_snplist.txt
 
-${plink2_executable} \
+"\$PLINK2_PATH" \
   --vcf ${vcf} \
   --extract hapmap3_snplist.txt \
   --make-bed \
@@ -31,13 +83,15 @@ ${plink2_executable} \
 process GenotypeQC {
 
     input:
-  tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), path(ExclusionList), \
-      path(InclusionList), val(genome_build), path(snplist)
-      file(fam_annot)
+  tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), val(ExclusionList), \
+      val(InclusionList), val(genome_build), path(snplist)
+      val(fam_annot)
       val(plink_executable)
       val(plink2_executable)
-      file(reference_1000g_folder)
-      file(chain_path)
+      val(reference_1000g_folder)
+      val(chain_path)
+      path(reference_unrelated_samples)
+      path(reference_populations)
 
     output:
       path('outputfolder_gen')
@@ -47,31 +101,37 @@ process GenotypeQC {
       path('outputfolder_gen/gen_data_QCd/SexCheck.txt')
 
     script:
-    if (params.reference_1000g_folder == '')
-      reference_1000g_prefix_arg = "--ref_1000g data/1000G_phase3_common_norel"
-    else
-      reference_1000g_prefix_arg = "--ref_1000g $reference_1000g_folder/1000G_phase3_common_norel"
+    // Resolve host runtime defaults locally because optional value inputs may be empty strings.
+    resolved_plink2_executable = plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
+    resolved_plink_executable = plink_executable ?: resolved_plink2_executable
+    resolved_reference_1000g_folder = reference_1000g_folder ?: "${params.runtime_cache_dir}/reference_1000g"
+    resolved_chain_path = chain_path ?: "${params.runtime_cache_dir}/chain"
+    resolved_liftover_executable = params.liftover_executable ?: "${params.runtime_cache_dir}/bin/liftOver"
 
-    fam_arg = (params.fam != '') ? "--fam $fam_annot" : ""
-    plink_arg = (params.plink_executable != '') ? "--plink_executable $plink_executable" : ""
-    plink2_arg = (params.plink2_executable != '') ? "--plink2_executable $plink2_executable" : ""
-    chain_path_arg = (params.chain_path != '') ? "--chain_path $chain_path" : ""
+    reference_1000g_prefix_arg = resolved_reference_1000g_folder ? "--ref_1000g ${resolved_reference_1000g_folder}/1000G_phase3_common_norel" : ""
+    fam_arg = fam_annot ? "--fam ${fam_annot}" : ""
+    plink_arg = resolved_plink_executable ? "--plink_executable ${resolved_plink_executable}" : ""
+    plink2_arg = resolved_plink2_executable ? "--plink2_executable ${resolved_plink2_executable}" : ""
+    chain_path_arg = resolved_chain_path ? "--chain_path ${resolved_chain_path}" : ""
+    inclusion_arg = InclusionList ? "--inclusion_list \"$InclusionList\"" : ""
+    exclusion_arg = ExclusionList ? "--exclusion_list \"${ExclusionList}\"" : ""
+    liftover_arg = resolved_liftover_executable ? "--liftover_path \"${resolved_liftover_executable}\"" : ""
 
     """
     Rscript --vanilla $baseDir/bin/GenQcAndPosAssign.R  \
     --target_bed ${bfile} \
     $fam_arg \
     --genome_build ${genome_build} \
-    --sample_list $baseDir/data/unrelated_reference_samples_ids.txt \
-    --pops $baseDir/data/1000G_pops.txt \
+    --sample_list ${reference_unrelated_samples} \
+    --pops ${reference_populations} \
     --S_threshold ${s_stat} \
     --SD_threshold ${sd_thresh} \
     --hwe_threshold ${hwe_threshold} \
     --qc_maf_threshold ${qc_maf_threshold} \
-    --inclusion_list "${InclusionList}" \
-    --exclusion_list "${ExclusionList}" \
+    $inclusion_arg \
+    $exclusion_arg \
     --output outputfolder_gen \
-    --liftover_path "${params.liftover_executable}" \
+    $liftover_arg \
     $plink_arg \
     $plink2_arg \
     $reference_1000g_prefix_arg \
@@ -89,11 +149,62 @@ process MergeBed {
       tuple file("chrAll.bed"), file("chrAll.bim"), file("chrAll.fam")
 
     script:
+      resolved_plink2_executable = plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
       """
+      ensure_plink2() {
+        local target="\$1"
+        if [[ -x "\$target" ]]; then
+          "\$target" --version >/dev/null 2>&1
+          local status="\$?"
+          if [[ "\$status" -ne 126 && "\$status" -ne 127 ]]; then
+            printf '%s\n' "\$target"
+            return 0
+          fi
+
+          rm -f "\$target"
+        fi
+
+        local os="\$(uname -s)"
+        local arch="\$(uname -m)"
+        local url=""
+        case "\$os:\$arch" in
+          Darwin:arm64)
+            url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip"
+            ;;
+          Darwin:x86_64)
+            url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip"
+            ;;
+          Linux:x86_64|Linux:amd64)
+            url="https://s3.amazonaws.com/plink2-assets/alpha7/plink2_linux_x86_64_20260504.zip"
+            ;;
+          *)
+            echo "Unsupported platform for automatic PLINK 2 download: \$os \$arch" >&2
+            return 1
+            ;;
+        esac
+
+        local target_dir
+        target_dir="\$(dirname "\$target")"
+        mkdir -p "\$target_dir"
+        local archive="\$target_dir/plink2.zip"
+        curl -fsSL "\$url" -o "\$archive"
+        unzip -jo "\$archive" plink2 -d "\$target_dir" >/dev/null
+        rm -f "\$archive"
+
+        if [[ "\$target" != "\$target_dir/plink2" ]]; then
+          mv -f "\$target_dir/plink2" "\$target"
+        fi
+
+        chmod +x "\$target"
+        printf '%s\n' "\$target"
+      }
+
+      PLINK2_PATH="\$(ensure_plink2 "${resolved_plink2_executable}")"
+
       ls chr*_HapMap3_filtered.bed \
       | sed 's/.bed\$//' > mergelist.txt
 
-      ${plink2_executable} --pmerge-list mergelist.txt bfile --make-bed --out "chrAll"
+      "\$PLINK2_PATH" --pmerge-list mergelist.txt bfile --make-bed --out "chrAll"
       """
 }
 
@@ -102,7 +213,7 @@ process RenderReport {
   publishDir "${params.output_dir}", mode: 'copy', overwrite: true
 
     input:
-      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), path(additional_covariates), path(vcf_filter_outputs), val(genotype_field)
+      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), val(additional_covariates), path(vcf_filter_outputs), val(genotype_field)
 
     output:
       path ('outputfolder_gen/')
@@ -139,7 +250,7 @@ process RenderReport {
 
 process FilterFinalVcf {
 
-  container { params.embedded_runtime ? null : 'quay.io/eqtlgen/eqtlgenimpute:v0.2' }
+  container { params.embedded_runtime ? null : 'genotypeqc:latest' }
   publishDir "${params.output_dir}/vcf_filtering", mode: 'copy', overwrite: true
 
     input:
@@ -234,15 +345,19 @@ workflow GENOTYPEQC {
         plink2
         reference
         chain
+    reference_unrelated_samples
+    reference_populations
 
     main:
         GenotypeQc_output_ch = GenotypeQC(
           data, 
-          fam.ifEmpty { Channel.value(null) },
+          fam,
           plink.ifEmpty { Channel.value(null) }, 
       plink2.ifEmpty { Channel.value(null) }, 
           reference.ifEmpty { Channel.value(null) }, 
-          chain.ifEmpty { Channel.value(null) }
+          chain.ifEmpty { Channel.value(null) },
+          reference_unrelated_samples,
+          reference_populations
           )
 
     emit:

@@ -187,18 +187,14 @@ read_plink2_afreq <- function(path) {
   afreq[, required_cols, drop = FALSE]
 }
 
-# Handle empty filter files.
-is_active_sample_filter <- function(path, default_basename = NULL) {
+# Handle optional filter files.
+is_active_sample_filter <- function(path) {
   if (is.null(path) || !nzchar(path)) {
     return(FALSE)
   }
 
   if (!file.exists(path)) {
     stop(sprintf("Sample filter file not found: %s", path))
-  }
-
-  if (!is.null(default_basename) && basename(path) == default_basename) {
-    return(FALSE)
   }
 
   isTRUE(file.info(path)$size > 0)
@@ -227,6 +223,206 @@ resolve_bundled_data_path <- function(filename) {
   }
 
   file.path("data", filename)
+}
+
+ensure_directory <- function(path) {
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  normalizePath(path, winslash = "/", mustWork = TRUE)
+}
+
+make_executable <- function(exe) {
+  Sys.chmod(exe, mode = "0755")
+  normalizePath(exe, winslash = "/", mustWork = TRUE)
+}
+
+download_binary <- function(url, destfile) {
+  utils::download.file(url, destfile = destfile, mode = "wb", quiet = FALSE)
+  destfile
+}
+
+binary_runs_on_host <- function(exe, args = character()) {
+  output <- tryCatch(
+    suppressWarnings(system2(exe, args = args, stdout = TRUE, stderr = TRUE)),
+    error = function(e) structure(conditionMessage(e), status = 127L)
+  )
+  status <- attr(output, "status")
+  is.null(status) || !(status %in% c(126L, 127L))
+}
+
+detect_plink2_url <- function() {
+  sysname <- Sys.info()[["sysname"]]
+  machine <- Sys.info()[["machine"]]
+
+  if (sysname == "Darwin" && machine == "arm64") {
+    return("https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip")
+  }
+  if (sysname == "Darwin" && machine == "x86_64") {
+    return("https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip")
+  }
+  if (sysname == "Linux" && machine %in% c("x86_64", "amd64")) {
+    return("https://s3.amazonaws.com/plink2-assets/alpha7/plink2_linux_x86_64_20260504.zip")
+  }
+
+  stop(sprintf(
+    "Automatic PLINK 2 download is not supported on %s/%s. Please provide --plink2_executable.",
+    sysname,
+    machine
+  ))
+}
+
+detect_liftover_url <- function() {
+  sysname <- Sys.info()[["sysname"]]
+  machine <- Sys.info()[["machine"]]
+
+  if (sysname == "Darwin" && machine == "arm64") {
+    return("https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.arm64/liftOver")
+  }
+  if (sysname == "Darwin" && machine == "x86_64") {
+    return("https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.x86_64/liftOver")
+  }
+  if (sysname == "Linux" && machine %in% c("x86_64", "amd64")) {
+    return("https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver")
+  }
+
+  stop(sprintf(
+    "Automatic liftOver download is not supported on %s/%s. Please provide --liftover_path.",
+    sysname,
+    machine
+  ))
+}
+
+ensure_plink2_executable <- function(target_path) {
+  if (is.null(target_path) || !nzchar(target_path)) {
+    stop("A PLINK 2 executable path must be provided.")
+  }
+
+  target_path <- path.expand(target_path)
+  if (file.exists(target_path)) {
+    target_path <- make_executable(target_path)
+    if (binary_runs_on_host(target_path, "--version")) {
+      return(target_path)
+    }
+
+    message(sprintf("PLINK 2 executable at %s is not usable on this host.", target_path))
+    unlink(target_path)
+  }
+
+  target_dir <- ensure_directory(dirname(target_path))
+  archive <- file.path(target_dir, "plink2.zip")
+  extracted <- file.path(target_dir, "plink2")
+
+  message(sprintf("PLINK 2 executable not found at %s.", target_path))
+  message("Attempting to download PLINK 2 executable into the runtime cache")
+
+  download_binary(detect_plink2_url(), archive)
+  utils::unzip(archive, files = "plink2", exdir = target_dir, junkpaths = TRUE)
+  unlink(archive)
+
+  if (normalizePath(extracted, winslash = "/", mustWork = TRUE) != target_path) {
+    ok <- file.rename(extracted, target_path)
+    if (!ok) {
+      ok <- file.copy(extracted, target_path, overwrite = TRUE)
+      unlink(extracted)
+    }
+    if (!ok) {
+      stop(sprintf("Failed to move downloaded PLINK 2 executable into %s.", target_path))
+    }
+  }
+
+  target_path <- make_executable(target_path)
+  if (!binary_runs_on_host(target_path, "--version")) {
+    stop(sprintf("Downloaded PLINK 2 executable at %s is not usable on this host.", target_path))
+  }
+
+  target_path
+}
+
+ensure_liftover_executable <- function(target_path) {
+  if (is.null(target_path) || !nzchar(target_path)) {
+    stop("A liftOver executable path must be provided.")
+  }
+
+  target_path <- path.expand(target_path)
+  if (file.exists(target_path)) {
+    target_path <- make_executable(target_path)
+    if (binary_runs_on_host(target_path)) {
+      return(target_path)
+    }
+
+    message(sprintf("liftOver executable at %s is not usable on this host.", target_path))
+    unlink(target_path)
+  }
+
+  target_dir <- ensure_directory(dirname(target_path))
+  target_file <- file.path(target_dir, basename(target_path))
+
+  message(sprintf("liftOver executable not found at %s.", target_path))
+  message("Attempting to download liftOver into the runtime cache")
+  download_binary(detect_liftover_url(), target_file)
+
+  target_file <- make_executable(target_file)
+  if (!binary_runs_on_host(target_file)) {
+    stop(sprintf("Downloaded liftOver executable at %s is not usable on this host.", target_file))
+  }
+
+  target_file
+}
+
+ensure_chain_files <- function(chain_dir) {
+  if (is.null(chain_dir) || !nzchar(chain_dir)) {
+    stop("A chain path must be provided when liftOver is required.")
+  }
+
+  chain_dir <- ensure_directory(chain_dir)
+  chain_urls <- c(
+    "hg19ToHg38.over.chain.gz" = "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+    "hg38ToHg19.over.chain.gz" = "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz"
+  )
+
+  for (chain_name in names(chain_urls)) {
+    chain_file <- file.path(chain_dir, chain_name)
+    if (!file.exists(chain_file)) {
+      message(sprintf("Chain file not found at %s.", chain_file))
+      message(sprintf("Attempting to download %s into the runtime cache", chain_name))
+      download_binary(chain_urls[[chain_name]], chain_file)
+    }
+  }
+
+  chain_dir
+}
+
+resolve_reference_prefix <- function(path) {
+  if (is.null(path) || !nzchar(path)) {
+    return(file.path("data", "1000G_phase3_common_norel"))
+  }
+  if (endsWith(path, "1000G_phase3_common_norel")) {
+    return(path)
+  }
+  file.path(path, "1000G_phase3_common_norel")
+}
+
+ensure_reference_1000g_prefix <- function(prefix_path) {
+  prefix_path <- resolve_reference_prefix(prefix_path)
+  reference_files <- paste0(prefix_path, c(".bed", ".bim", ".fam"))
+  normalized_prefix <- file.path(
+    normalizePath(dirname(prefix_path), winslash = "/", mustWork = TRUE),
+    basename(prefix_path)
+  )
+
+  if (all(file.exists(reference_files))) {
+    message(paste0("Found 1000G reference at ", prefix_path, "'.<bim/bed/fam>'."))
+    return(normalized_prefix)
+  }
+
+  reference_dir <- ensure_directory(dirname(prefix_path))
+  message(paste0("1000G reference does not exist at ", prefix_path, "'.<bim/bed/fam>'."))
+  message("Attempting to download the 1000G reference data into the runtime cache")
+
+  downloaded_prefix <- download_1000G(reference_dir)
+  file.path(
+    normalizePath(dirname(downloaded_prefix), winslash = "/", mustWork = TRUE),
+    basename(downloaded_prefix)
+  )
 }
 
 # Validate the genome build of the input data with a set of HapMap3 variants.
@@ -468,12 +664,8 @@ if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numer
   stop()
 }
 
-if (is.null(args$liftover_path) || !nzchar(args$liftover_path)) {
-  stop("A path to the UCSC liftOver executable must be provided via --liftover_path.")
-}
-
-liftover_executable <- normalizePath(args$liftover_path, winslash = "/", mustWork = TRUE)
-liftover_bigsnpr <- file.path(".", R.utils::getRelativePath(liftover_executable))
+liftover_executable <- ensure_liftover_executable(args$liftover_path)
+liftover_bigsnpr <- liftover_executable
 
 # Map genome builds to build codes.
 build_code <- "b37"
@@ -501,6 +693,12 @@ reference_ucsc_code <- "hg19"
 needs_liftover_to_reference <- ucsc_code != reference_ucsc_code
 needs_liftover_from_reference <- ucsc_code != reference_ucsc_code
 
+chain_path <- args$chain_path
+if (needs_liftover_from_reference || needs_liftover_to_reference) {
+  chain_path <- ensure_chain_files(chain_path)
+  message(paste0("Found liftOver chain files at ", chain_path))
+}
+
 bed_simplepath <- stringr::str_replace(args$target_bed, ".bed", "")
 
 # Make output folder structure
@@ -510,76 +708,22 @@ dir.create(paste0(args$output, "/gen_data_QCd"))
 dir.create(paste0(args$output, "/gen_PCs"))
 dir.create(paste0(args$output, "/gen_data_summary"))
 
-# Download plink executables
-make_executable <- function(exe) {
-  Sys.chmod(exe, mode = (file.info(exe)$mode | "111"))
-}
+PLINK2 <- ensure_plink2_executable(args$plink2_executable)
+message(sprintf("PLINK 2 executable found at %s.", PLINK2))
 
-PLINK <- args$plink_executable
-PLINK2 <- args$plink2_executable
-
-if (is.null(PLINK2) || PLINK2 == "" || !file.exists(PLINK2)) {
-  message(sprintf("PLINK 2 executable empty, or not found at %s.", PLINK2))
-  message("Attempting to download PLINK 2 executable")
-
-  dir.create("plink")
-
-  # Download plink 2 executable
-  utils::download.file("https://s3.amazonaws.com/plink2-assets/alpha3/plink2_linux_x86_64_20221024.zip",
-                       destfile = "plink/plink2.zip", verbose = TRUE)
-  PLINK2 <- utils::unzip("plink/plink2.zip",
-                        files = "plink2",
-                        exdir = "plink")
+if (is.null(args$plink_executable) || !nzchar(args$plink_executable)) {
+  PLINK <- PLINK2
+  message(sprintf("Using PLINK 2 executable for PLINK-compatible commands at %s.", PLINK))
+} else if (file.exists(args$plink_executable)) {
+  PLINK <- make_executable(normalizePath(args$plink_executable, winslash = "/", mustWork = TRUE))
+  message(sprintf("PLINK-compatible executable found at %s.", PLINK))
 } else {
-  PLINK2 <- normalizePath(PLINK2) 
-  message(sprintf("PLINK 2 executable found at %s.", PLINK2))
+  message(sprintf("PLINK executable not found at %s; reusing the PLINK 2 binary instead.", args$plink_executable))
+  PLINK <- PLINK2
 }
+using_plink2_for_plink <- identical(PLINK, PLINK2)
 
-make_executable(PLINK2)
-
-if (is.null(PLINK) || PLINK == "" || !file.exists(PLINK)) {
-  message(sprintf("PLINK 1.9 executable empty, or not found at %s.", PLINK))
-  message("Attempting to download PLINK 1.9 executable")
-
-  dir.create("plink")
-  
-  # Download plink 1.9 executable
-  utils::download.file("https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20220402.zip",
-  destfile = "plink/plink.zip", verbose = TRUE)
-  PLINK <- utils::unzip("plink/plink.zip",
-                          files = "plink",
-                          exdir = "plink")
-} else {
-  PLINK <- normalizePath(PLINK)
-  message(sprintf("PLINK 1.9 executable found at %s.", PLINK))
-}
-
-make_executable(PLINK)
-
-ref_1000g_prefix <- "data"
-if (!is.null(args$ref_1000g) && args$ref_1000g != "") {
-  if (endsWith(args$ref_1000g, "1000G_phase3_common_norel")) {
-    ref_1000g_prefix <- args$ref_1000g
-  }
-}
-
-if (file.exists(paste0(ref_1000g_prefix, ".bed"))
-  & file.exists(paste0(ref_1000g_prefix, ".bim"))
-  & file.exists(paste0(ref_1000g_prefix, ".fam"))) {
-  message(paste0("found 1000G reference at ", ref_1000g_prefix, "'.<bim/bed/fam>'."))
-} else {
-  # Download subsetted 1000G reference
-  message(paste0("1000G reference does not exist at ", ref_1000g_prefix, "'.<bim/bed/fam>'."))
-  message("Attempting to download the 1000G reference data")
-  bedfile <- download_1000G(dirname(ref_1000g_prefix))
-}
-
-## Chain files for LiftOver (used when input and reference builds differ)
-chain_path <- args$chain_path
-if (file.exists(paste0(chain_path, "/hg19ToHg38.over.chain.gz")) &
-    file.exists(paste0(chain_path, "/hg38ToHg19.over.chain.gz"))) {
-  message(paste0("Found liftOver chain files at ", chain_path))
-}
+ref_1000g_prefix <- ensure_reference_1000g_prefix(args$ref_1000g)
 
 ## Calculate AFs for reference data
 system(paste0(PLINK2, " --bfile ", ref_1000g_prefix, " --threads 4 --freq 'cols=+pos' --out 1000Gref"))
@@ -587,7 +731,7 @@ system(paste0(PLINK2, " --bfile ", ref_1000g_prefix, " --threads 4 --freq 'cols=
 if (needs_liftover_from_reference) {
   target_frequencies <- read_plink2_afreq("1000Gref.afreq")
 
-  if (!is.null(args$chain_path) && args$chain_path != "") {
+  if (!is.null(chain_path) && nzchar(chain_path)) {
     target_frequencies_mapped <- snp_modifyBuild2(
       target_frequencies, liftover_executable,
       from = reference_ucsc_code, to = ucsc_code, chain_path = chain_path)
@@ -667,7 +811,7 @@ if (!is.null(args$fam) && args$fam != "") {
 fwrite(fam, "fam_normalized.fam", col.names = F, row.names = F, quote = F, sep = "\t")
 
 ## If specified, keep in only samples which are in the sample whitelist
-if (is_active_sample_filter(args$inclusion_list, "EmpiricalProbeMatching_AffyHumanExon.txt")) {
+if (is_active_sample_filter(args$inclusion_list)) {
   inc_list <- fread(args$inclusion_list, header = FALSE,
                     keepLeadingZeros = TRUE, colClasses = "character")
   samples_to_include <- fam[fam$`sample.ID` %in% inc_list$V1, ]
@@ -682,7 +826,7 @@ if (!exists("samples_to_include")) {
 }
 
 # Remove samples which are in the exclusion list
-if (is_active_sample_filter(args$exclusion_list, "EmpiricalProbeMatching_AffyU219.txt")) {
+if (is_active_sample_filter(args$exclusion_list)) {
   exc_list <- fread(args$exclusion_list, header = FALSE,
                     keepLeadingZeros = TRUE, colClasses = "character")
   samples_to_include <- samples_to_include[!samples_to_include$`sample.ID` %in% exc_list$V1, ]
@@ -789,7 +933,7 @@ if ("X" %in% sex_check_data_set_chromosomes) {
 
       variants_sex_check$chr <- "X"
 
-      if (!is.null(args$chain_path) && args$chain_path != "") {
+      if (!is.null(chain_path) && nzchar(chain_path)) {
         variants_sex_check_new <- snp_modifyBuild2(
           variants_sex_check, liftover_executable,
           from = reference_ucsc_code, to = ucsc_code, chain_path = chain_path)
@@ -981,7 +1125,7 @@ message("Projecting samples to 1000G reference.")
 unrelated_ref_samples <- fread(args$sample_list, keepLeadingZeros = TRUE, colClasses = 'character')
 unrelated_ref_samples <- as.numeric(unrelated_ref_samples$ind.row)
 
-if (needs_liftover_to_reference && !is.null(args$chain_path) && args$chain_path != "") {
+if (needs_liftover_to_reference && !is.null(chain_path) && nzchar(chain_path)) {
   message("Using offline version of PCA sample projection function.")
 
   map_new <- setNames(target_bed$map[-3], c("chr", "rsid", "pos", "a1", "a0"))
@@ -1005,7 +1149,12 @@ if (needs_liftover_to_reference && !is.null(args$chain_path) && args$chain_path 
 
   fwrite(lifted_bim[!is.na(lifted_bim$pos), ], "lifted_map.bim", sep = "\t", col.names = FALSE, row.names = FALSE)
 
-  system(paste0(PLINK,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --make-bed --out temp_for_PCA"))
+  if (using_plink2_for_plink) {
+    system(paste0(PLINK2,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --sort-vars --make-pgen --out temp_for_PCA_sorted"))
+    system(paste0(PLINK2, " --pfile temp_for_PCA_sorted --make-bed --out temp_for_PCA"))
+  } else {
+    system(paste0(PLINK,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --make-bed --out temp_for_PCA"))
+  }
 
   proj_PCA <- bed_projectPCA(
     obj.bed.ref = ref_bed,
@@ -1023,7 +1172,7 @@ if (needs_liftover_to_reference && !is.null(args$chain_path) && args$chain_path 
     ncores = 4
   )
 
-  system("rm temp_for_PCA*")
+  system("rm -f temp_for_PCA* temp_for_PCA_sorted*")
 
 } else {
   proj_PCA <- bed_projectPCA(
