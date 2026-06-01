@@ -414,6 +414,7 @@ collect_maf <- function(files, stage_label) {
 maf_before <- collect_maf(prefilter_files, "Before QC filters")
 maf_after <- collect_maf(filtered_files, "After QC filters")
 maf_long <- rbind(maf_before, maf_after)
+maf_long$Stage <- factor(maf_long$Stage, levels = c("Before QC filters", "After QC filters"))
 
 if (nrow(maf_long) == 0) {
   cat("Genome-wide MAF histogram not available: no valid MAF values were found in per-chromosome metrics files.\n")
