@@ -7,8 +7,8 @@ Automatic QC pipeline with checks, processing and reporting for genotype data in
 The pipeline performs the following main steps:
 
 - Genotype QC and filtering:
-  - In VCF mode, converts each chromosome to a PLINK dataset on the bundled HapMap3 marker subset before merging. In PLINK mode, starts directly from the supplied bed/bim/fam prefix.
-  - Applies standard variant QC filtering on the HapMap3 subset used for QC and ancestry projection, including variant missingness, Hardy-Weinberg equilibrium, and minor allele frequency thresholds.
+  - In VCF mode, converts each chromosome to a PLINK dataset and merges the full input variant set before sample QC, PCA, and ancestry projection. In PLINK mode, starts directly from the supplied bed/bim/fam prefix.
+  - Applies standard variant QC filtering to the full post-sample-QC VCF, including Hardy-Weinberg equilibrium, minor allele frequency, and imputation-quality thresholds when VCF input is provided.
   - Applies sample-level missingness filtering.
   - Compares reported and genetic sex when known sex is supplied in a `.fam` file, and removes mismatched or unclear samples.
   - Removes samples with excess heterozygosity (+/-3 SD from the mean).
@@ -29,7 +29,6 @@ The pipeline performs the following main steps:
 
 Bundled static resources kept in the repo:
 
-- `data/hapmap3_snps.tsv`
 - `data/1000G_pops.txt`
 - `data/unrelated_reference_samples_ids.txt`
 - `data/validation_snps.tsv`
@@ -124,7 +123,6 @@ Use the generic scheduler template in `submit_GenotypeQC_pipeline_template.sh` a
 - `--reference_1000g_folder` Override the 1000G reference directory.
 - `--chain_path` Override the directory containing `hg19ToHg38.over.chain.gz` and `hg38ToHg19.over.chain.gz`.
 - `--liftover_executable` Override the UCSC liftOver binary path.
-- `--snpfilter` Override the bundled HapMap3 variant list.
 - `--qc_out_s` Outlierness threshold for ancestry outlier detection. Default: `0.4`.
 - `--qc_out_sd` PC-based outlier threshold in SD units. Default: `3`.
 - `--qc_hwe` HWE threshold for genotype QC. Default: `1e-6`.

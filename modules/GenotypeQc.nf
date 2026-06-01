@@ -19,29 +19,23 @@ process ConvertAndFilterVcf {
 
 input:
   tuple path(vcf), val(s_stat), val(sd_thresh), val(ExclusionList), \
-      val(InclusionList), val(genome_build), path(snplist),
+      val(InclusionList), val(genome_build),
   val(plink2_executable)
   path(runtime_ready)
 
 output:
-  tuple path("*_HapMap3_filtered.bed"), path("*_HapMap3_filtered.bim"), path("*_HapMap3_filtered.fam")
+  tuple path("*_converted.bed"), path("*_converted.bim"), path("*_converted.fam")
 
 script:
 resolved_plink2_executable = plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
 """
 
 chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
-if gzip -t "${snplist}" >/dev/null 2>&1; then
-  gzip -dc "${snplist}"
-else
-  cat "${snplist}"
-fi | cut -f1 | tail -n +2 > hapmap3_snplist.txt
 
 "${resolved_plink2_executable}" \
   --vcf ${vcf} \
-  --extract hapmap3_snplist.txt \
   --make-bed \
-  --out \${chr}_HapMap3_filtered
+  --out \${chr}_converted
 """
 }
 
@@ -50,7 +44,7 @@ process GenotypeQC {
 
     input:
   tuple path(bfile), path(bim), path(fam), val(s_stat), val(sd_thresh), val(hwe_threshold), val(qc_maf_threshold), val(ExclusionList), \
-      val(InclusionList), val(genome_build), path(snplist)
+      val(InclusionList), val(genome_build)
       path(runtime_ready)
       val(fam_annot)
       val(plink_executable)
@@ -119,7 +113,7 @@ process MergeBed {
     script:
       resolved_plink2_executable = plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
       """
-      ls chr*_HapMap3_filtered.bed \
+      ls chr*_converted.bed \
       | sed 's/.bed\$//' > mergelist.txt
 
       "${resolved_plink2_executable}" --pmerge-list mergelist.txt bfile --make-bed --out "chrAll"
@@ -172,7 +166,7 @@ process FilterFinalVcf {
   publishDir "${params.output_dir}/vcf_filtering", mode: 'copy', overwrite: true
 
     input:
-      tuple path(vcf), path(filtered_fam), path(snplist), val(maf), val(vcf_hwe_threshold), val(imputation_th), val(info_field), val(genotype_field)
+      tuple path(vcf), path(filtered_fam), val(maf), val(vcf_hwe_threshold), val(imputation_th), val(info_field), val(genotype_field)
 
     output:
       tuple path("*_filtered.vcf.gz"), path("*_filtered.vcf.gz.csi"), path("*_prefilter.stats.txt"), path("*_filtered.stats.txt"), path("*_prefilter.variant_metrics.tsv"), path("*_filtered.variant_metrics.tsv")
@@ -180,18 +174,11 @@ process FilterFinalVcf {
     script:
     """
     chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
-    if gzip -t "${snplist}" >/dev/null 2>&1; then
-      gzip -dc "${snplist}"
-    else
-      cat "${snplist}"
-    fi | cut -f1 | tail -n +2 > hapmap3_snpids.txt
-
     awk '{print \$2}' ${filtered_fam} | sort -u > iids.txt
 
-    # 1) Filter by HapMap3 variants and QC-passed samples.
+    # 1) Filter by QC-passed samples.
     bcftools view \
     -S iids.txt \
-    -i "ID=@hapmap3_snpids.txt" \
     -Ob -o \${chr}_subset.bcf \
     ${vcf}
 

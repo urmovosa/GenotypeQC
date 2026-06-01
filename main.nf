@@ -32,7 +32,6 @@ def helpMessage() {
       --exclusion_list              File with sample IDs to remove from the analysis. Useful for removing ancestry outliers or restricting the genotype data to one superpopulation. Samples are also removed from the inclusion list. By default, no samples are removed.
       --additional_covariates       File with additional cohort-specific covariates. First column name SampleID is the sample ID. Following columns are named by covariates. Categorical covariates need to be text-based (e.g. batch1, batch2, etc). By default, no extra covariates are added.
       --preselected_sex_check_vars  Path to a plink ranges file that defines which variants to use for the check-sex command. Use this when the automatic selection does not yield satisfactory results.
-      --snpfilter                   HapMap3 variant list. Defaults to the bundled list at $baseDir/data/hapmap3_snps.tsv.
       --reference_unrelated_samples File with unrelated 1000G reference sample indices. Defaults to the bundled file at $baseDir/data/unrelated_reference_samples_ids.txt.
       --reference_populations       File with 1000G sample population labels. Defaults to the bundled file at $baseDir/data/1000G_pops.txt.
       --plink_executable            Path to a PLINK-compatible executable. Defaults to the cached PLINK 2 binary in $baseDir/.runtime_downloads/bin/.
@@ -85,7 +84,6 @@ def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh3
 params.vcf = params.vcf ?: ''
 params.bfile = params.bfile ?: ''
 params.fam = params.fam ?: ''
-params.snpfilter = params.snpfilter ?: "$baseDir/data/hapmap3_snps.tsv"
 params.reference_unrelated_samples = params.reference_unrelated_samples ?: "$baseDir/data/unrelated_reference_samples_ids.txt"
 params.reference_populations = params.reference_populations ?: "$baseDir/data/1000G_pops.txt"
 
@@ -123,10 +121,6 @@ Channel.value(resolved_plink2_executable).set { plink2_cmd_ch }
 Channel.value(resolved_reference_1000g_folder).set { reference_1000g_ch }
 Channel.value(resolved_chain_path).set { chain_path_ch }
 Channel.value(resolved_runtime_asset_root).set { runtime_asset_root_ch }
-
-Channel
-  .fromPath(params.snpfilter, checkIfExists: true)
-  .set { snpfilter_ch }
 
 Channel
   .fromPath(params.reference_unrelated_samples, checkIfExists: true)
@@ -194,7 +188,6 @@ summary['VCF INFO field']           = params.vcf_imp_field
 summary['VCF genotype INFO field']  = params.vcf_genotype_field
 summary['QC S threshold']           = params.qc_out_s
 summary['QC SD threshold']          = params.qc_out_sd
-summary['SNP filter filter']        = params.snpfilter
 summary['Max Memory']               = params.max_memory
 summary['Max CPUs']                 = params.max_cpus
 summary['Max Time']                 = params.max_time
@@ -237,7 +230,6 @@ workflow {
       .combine(exclusion_list_ch)
       .combine(inclusion_list_ch)
       .combine(genome_build_ch)
-      .combine(snpfilter_ch)
       .combine(plink2_cmd_ch)
    
       CONVERTANDFILTERVCF(
@@ -271,7 +263,6 @@ workflow {
       .combine(exclusion_list_ch)
       .combine(inclusion_list_ch)
       .combine(genome_build_ch)
-      .combine(snpfilter_ch)
 
   GENOTYPEQC(
       genotypeqc_input_ch, 
@@ -287,7 +278,6 @@ workflow {
     if (params.vcf != '') {
       vcf_filter_input_ch = vcf_ch
       .combine(GENOTYPEQC.out[1])
-      .combine(snpfilter_ch)
       .combine(vcf_maf_ch)
       .combine(vcf_hwe_ch)
       .combine(vcf_imp_ch)
