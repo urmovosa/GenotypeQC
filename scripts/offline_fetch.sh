@@ -2,49 +2,111 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [RUNTIME_CACHE_DIR]" >&2
-}
+  cat <<EOF >&2
+Usage: $0 [--platform PLATFORM] [RUNTIME_CACHE_DIR]
 
-if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
-  usage
-  exit 0
-fi
+Supported PLATFORM values:
+  linux-x86_64
+  darwin-arm64
+  darwin-x86_64
+
+When --platform is omitted, the current host platform is used.
+EOF
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-RUNTIME_CACHE_DIR="${1:-${REPO_ROOT}/.runtime_downloads}"
 
-detect_plink2_url() {
-  case "$(uname -s):$(uname -m)" in
+normalize_platform() {
+  case "$1:$2" in
     Darwin:arm64)
-      printf '%s\n' "https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip"
+      printf '%s\n' "darwin-arm64"
       ;;
     Darwin:x86_64)
-      printf '%s\n' "https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip"
+      printf '%s\n' "darwin-x86_64"
       ;;
     Linux:x86_64|Linux:amd64)
+      printf '%s\n' "linux-x86_64"
+      ;;
+    *)
+      echo "Unsupported platform: $1 $2" >&2
+      exit 1
+      ;;
+  esac
+}
+
+TARGET_PLATFORM="${GENOTYPEQC_TARGET_PLATFORM:-$(normalize_platform "$(uname -s)" "$(uname -m)")}"
+RUNTIME_CACHE_DIR=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --platform)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --platform" >&2
+        usage
+        exit 1
+      fi
+      TARGET_PLATFORM="$2"
+      shift 2
+      ;;
+    --platform=*)
+      TARGET_PLATFORM="${1#*=}"
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      if [[ -n "${RUNTIME_CACHE_DIR}" ]]; then
+        echo "Only one runtime cache directory may be provided." >&2
+        usage
+        exit 1
+      fi
+      RUNTIME_CACHE_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+RUNTIME_CACHE_DIR="${RUNTIME_CACHE_DIR:-${REPO_ROOT}/.runtime_downloads}"
+
+detect_plink2_url() {
+  case "${TARGET_PLATFORM}" in
+    darwin-arm64)
+      printf '%s\n' "https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip"
+      ;;
+    darwin-x86_64)
+      printf '%s\n' "https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip"
+      ;;
+    linux-x86_64)
       printf '%s\n' "https://s3.amazonaws.com/plink2-assets/alpha7/plink2_linux_x86_64_20260504.zip"
       ;;
     *)
-      echo "Unsupported platform for automatic PLINK 2 download: $(uname -s) $(uname -m)" >&2
+      echo "Unsupported platform for automatic PLINK 2 download: ${TARGET_PLATFORM}" >&2
       exit 1
       ;;
   esac
 }
 
 detect_liftover_url() {
-  case "$(uname -s):$(uname -m)" in
-    Darwin:arm64)
+  case "${TARGET_PLATFORM}" in
+    darwin-arm64)
       printf '%s\n' "https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.arm64/liftOver"
       ;;
-    Darwin:x86_64)
+    darwin-x86_64)
       printf '%s\n' "https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.x86_64/liftOver"
       ;;
-    Linux:x86_64|Linux:amd64)
+    linux-x86_64)
       printf '%s\n' "https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver"
       ;;
     *)
-      echo "Unsupported platform for automatic liftOver download: $(uname -s) $(uname -m)" >&2
+      echo "Unsupported platform for automatic liftOver download: ${TARGET_PLATFORM}" >&2
       exit 1
       ;;
   esac
@@ -146,6 +208,9 @@ fi
 cat <<EOF
 Runtime cache prepared at:
   ${RUNTIME_CACHE_DIR}
+
+Target platform:
+- ${TARGET_PLATFORM}
 
 Cached assets:
 - ${RUNTIME_CACHE_DIR}/bin/plink2

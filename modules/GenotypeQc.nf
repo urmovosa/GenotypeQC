@@ -9,10 +9,16 @@ output:
   path("runtime.ready")
 
 script:
+if (params.embedded_runtime) {
+  """
+  touch runtime.ready
+  """
+} else {
 """
 "$baseDir/scripts/offline_fetch.sh" "${runtime_cache_dir}"
 touch runtime.ready
 """
+}
 }
 
 process ConvertAndFilterVcf {

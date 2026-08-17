@@ -429,7 +429,7 @@ if (nrow(maf_long) == 0) {
 ```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = exists("maf_plot_ready") && maf_plot_ready}
 ggplot(maf_long, aes(x = MAF)) +
   geom_histogram(bins = 50, color = "white", fill = "steelblue") +
-  facet_wrap(~ Stage, ncol = 2, scales = "free_y") +
+  facet_grid(. ~ Stage, scales = "free_y") +
   theme_bw() +
   xlab("Minor allele frequency (MAF)") +
   ylab("Variant count")
@@ -508,6 +508,7 @@ collect_imputation_metric <- function(files, stage_label, preferred_field = "R2"
 imp_before_res <- collect_imputation_metric(prefilter_files, "Before QC filters", imp_metric_field)
 imp_after_res <- collect_imputation_metric(filtered_files, "After QC filters", imp_metric_field)
 impq_long <- rbind(imp_before_res$data, imp_after_res$data)
+impq_long$Stage <- factor(impq_long$Stage, levels = c("Before QC filters", "After QC filters"))
 impq_used_fields <- union(imp_before_res$used_fields, imp_after_res$used_fields)
 
 if (nrow(impq_long) == 0) {
@@ -524,7 +525,7 @@ if (nrow(impq_long) == 0) {
 ```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = exists("impq_plot_ready") && impq_plot_ready}
 ggplot(impq_long, aes(x = Metric)) +
   geom_histogram(bins = 50, color = "white", fill = "darkseagreen4") +
-  facet_wrap(~ Stage, ncol = 2, scales = "free_y") +
+  facet_grid(. ~ Stage, scales = "free_y") +
   theme_bw() +
   xlab("Imputation quality metric") +
   ylab("Variant count")

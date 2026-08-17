@@ -58,11 +58,11 @@ params.embedded_runtime = params.embedded_runtime ?: false
 params.runtime_cache_dir = params.runtime_cache_dir ?: "$baseDir/.runtime_downloads"
 
 if (params.embedded_runtime) {
-  params.liftover_executable = params.liftover_executable ?: "$baseDir/.runtime/bin/liftOver"
-  params.plink_executable = params.plink_executable ?: "$baseDir/.runtime/bin/plink"
-  params.plink2_executable = params.plink2_executable ?: "$baseDir/.runtime/bin/plink2"
-  params.reference_1000g_folder = params.reference_1000g_folder ?: "$baseDir/.runtime/reference_1000g"
-  params.chain_path = params.chain_path ?: "$baseDir/.runtime/chain"
+  params.liftover_executable = params.liftover_executable ?: "${params.embedded_runtime_root}/bin/liftOver"
+  params.plink_executable = params.plink_executable ?: "${params.embedded_runtime_root}/bin/plink"
+  params.plink2_executable = params.plink2_executable ?: "${params.embedded_runtime_root}/bin/plink2"
+  params.reference_1000g_folder = params.reference_1000g_folder ?: "${params.embedded_runtime_root}/reference_1000g"
+  params.chain_path = params.chain_path ?: "${params.embedded_runtime_root}/chain"
 } else {
   params.plink2_executable = params.plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
   params.plink_executable = params.plink_executable ?: params.plink2_executable
@@ -71,12 +71,12 @@ if (params.embedded_runtime) {
   params.liftover_executable = params.liftover_executable ?: "${params.runtime_cache_dir}/bin/liftOver"
 }
 
-def resolved_plink_executable = params.plink_executable ?: (params.embedded_runtime ? "$baseDir/.runtime/bin/plink" : "${params.runtime_cache_dir}/bin/plink2")
-def resolved_plink2_executable = params.plink2_executable ?: (params.embedded_runtime ? "$baseDir/.runtime/bin/plink2" : "${params.runtime_cache_dir}/bin/plink2")
-def resolved_reference_1000g_folder = params.reference_1000g_folder ?: (params.embedded_runtime ? "$baseDir/.runtime/reference_1000g" : "${params.runtime_cache_dir}/reference_1000g")
-def resolved_chain_path = params.chain_path ?: (params.embedded_runtime ? "$baseDir/.runtime/chain" : "${params.runtime_cache_dir}/chain")
-def resolved_liftover_executable = params.liftover_executable ?: (params.embedded_runtime ? "$baseDir/.runtime/bin/liftOver" : "${params.runtime_cache_dir}/bin/liftOver")
-def resolved_runtime_asset_root = params.embedded_runtime ? "$baseDir/.runtime" : params.runtime_cache_dir
+def resolved_plink_executable = params.plink_executable ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/bin/plink" : "${params.runtime_cache_dir}/bin/plink2")
+def resolved_plink2_executable = params.plink2_executable ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/bin/plink2" : "${params.runtime_cache_dir}/bin/plink2")
+def resolved_reference_1000g_folder = params.reference_1000g_folder ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/reference_1000g" : "${params.runtime_cache_dir}/reference_1000g")
+def resolved_chain_path = params.chain_path ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/chain" : "${params.runtime_cache_dir}/chain")
+def resolved_liftover_executable = params.liftover_executable ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/bin/liftOver" : "${params.runtime_cache_dir}/bin/liftOver")
+def resolved_runtime_asset_root = params.embedded_runtime ? params.embedded_runtime_root : params.runtime_cache_dir
 
 // Define set of accepted genome builds:
 def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh38']
@@ -208,7 +208,7 @@ summary['Output dir']               = params.output_dir
 summary['Container Engine']         = workflow.containerEngine
 if(workflow.containerEngine) summary['Container'] = workflow.container
 summary['Current home']             = "$HOME"
-summary['Current user']             = "$USER"
+summary['Current user']             = "${System.getenv('USER') ?: 'unknown'}"
 summary['Current path']             = "$PWD"
 summary['Working dir']              = workflow.workDir
 summary['Script dir']               = workflow.projectDir

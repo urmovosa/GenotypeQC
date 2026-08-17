@@ -1,0 +1,148 @@
+name: Publish GHCR Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-ghcr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      REGISTRY: ghcr.io
+      APPTAINER_AUTHFILE: /tmp/apptainer-ghcr-auth.json
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Derive package names
+        id: names
+        shell: bash
+        run: |
+          owner_lc="${GITHUB_REPOSITORY_OWNER,,}"
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          repo_lc="${repo_name,,}"
+
+          echo "oci_image=${REGISTRY}/${owner_lc}/${repo_lc}" >> "$GITHUB_OUTPUT"
+          echo "sif_image=${REGISTRY}/${owner_lc}/${repo_lc}-sif" >> "$GITHUB_OUTPUT"
+
+      - name: Derive tags
+        id: tags
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          OCI_IMAGE: ${{ steps.names.outputs.oci_image }}
+        run: |
+          short_sha="${GITHUB_SHA::12}"
+          tags=("sha-${short_sha}")
+
+          if [[ "${GITHUB_REF_TYPE}" == "branch" && "${GITHUB_REF_NAME}" == "${DEFAULT_BRANCH}" ]]; then
+            tags+=("latest")
+          fi
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tags+=("${GITHUB_REF_NAME}")
+          fi
+
+          {
+            echo "tag_names<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "oci_refs<<EOF"
+            for tag in "${tags[@]}"; do
+              echo "${OCI_IMAGE}:${tag}"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push OCI image
+        id: build_oci
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.oci_refs }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=GenotypeQC runtime image for Docker and Apptainer/Singularity workflows.
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Install Apptainer
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apptainer squashfs-tools
+          apptainer version
+
+      - name: Log in to GHCR for Apptainer
+        shell: bash
+        run: |
+          rm -f "$APPTAINER_AUTHFILE"
+          apptainer registry login \
+            --username "${GITHUB_ACTOR}" \
+            --password "${{ secrets.GITHUB_TOKEN }}" \
+            --authfile "$APPTAINER_AUTHFILE" \
+            docker://ghcr.io
+
+      - name: Build SIF from published OCI image
+        env:
+          OCI_IMAGE: ${{ steps.names.outputs.oci_image }}
+        shell: bash
+        run: |
+          apptainer build \
+            --authfile "$APPTAINER_AUTHFILE" \
+            genotypeqc_latest.sif \
+            "docker://${OCI_IMAGE}@${{ steps.build_oci.outputs.digest }}"
+
+      - name: Push SIF to GHCR
+        env:
+          SIF_IMAGE: ${{ steps.names.outputs.sif_image }}
+          TAG_NAMES: ${{ steps.tags.outputs.tag_names }}
+        shell: bash
+        run: |
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            apptainer push \
+              --authfile "$APPTAINER_AUTHFILE" \
+              genotypeqc_latest.sif \
+              "oras://${SIF_IMAGE}:${tag}"
+          done <<< "$TAG_NAMES"
+
+      - name: Upload SIF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: genotypeqc-sif
+          path: genotypeqc_latest.sif
+          if-no-files-found: error

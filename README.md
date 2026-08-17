@@ -23,8 +23,10 @@ The pipeline performs the following main steps:
 
 ## Requirements
 
-- Host or scheduler runs: Bash >= 3.2, Java >= 17, Nextflow, and either Apptainer/Singularity or Docker.
-- Single-image Docker runs: Docker only.
+- Production offline runs: Bash >= 3.2, Java >= 17, Nextflow, and Apptainer or Singularity.
+- Staging machine: the same requirements as the offline target, plus network access to pull the public image.
+- Local Docker runs: Docker only.
+- Non-container development runs: Bash >= 3.2, Java >= 17, Nextflow, R, and the development runtime cache.
 - For VCF input: one `.vcf.gz` per chromosome in a single directory.
 
 Bundled static resources kept in the repo:
@@ -33,44 +35,68 @@ Bundled static resources kept in the repo:
 - `data/unrelated_reference_samples_ids.txt`
 - `data/validation_snps.tsv`
 
-Large runtime assets are not committed. Host runs populate a reusable cache in `.runtime_downloads/` by default.
+The public container image includes R, PLINK2, liftOver, chain files, and the 1000G reference. Production runs do not download runtime assets or send input data over the network.
 
 ## Quick Start
 
-### Host run
+### Offline Apptainer Or Singularity Run
+
+This is the recommended workflow for privacy-sensitive data. Prepare a local bundle while the staging machine has network access, then run only from local files after disconnecting it or copying the bundle to an offline Linux HPC cluster.
+
+The staging and target machines must be Linux x86_64. Start from a repository checkout on the connected staging machine:
+
+```bash
+git clone https://github.com/urmovosa/GenotypeQC.git
+cd GenotypeQC
+scripts/offline_stage.sh --platform linux-x86_64
+```
+
+The script reports missing Java, Nextflow, and Apptainer or Singularity. When it completes, `.offline_bundle/` contains a local SIF image, warmed Nextflow runtime, and `offline-env.sh`.
+
+To use a separate offline cluster, copy both the repository checkout and `.offline_bundle/` to the cluster. Also copy a Nextflow launcher if the cluster does not provide `nextflow`.
+
+On the offline machine, source the generated environment and run against your own input directory:
 
 Per-chromosome VCF input:
 
 ```bash
-NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
-  -profile local_vm \
+source /path/to/GenotypeQC/.offline_bundle/offline-env.sh
+
+NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
+  -profile local_vm,singularity \
+  --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
   --vcf /absolute/path/to/imputed_vcfs \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
-  --output_dir results/cohort_a \
+  --output_dir /absolute/path/to/results/cohort_a \
   -resume
 ```
 
 PLINK bed/bim/fam input:
 
 ```bash
-NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
-  -profile local_vm \
+source /path/to/GenotypeQC/.offline_bundle/offline-env.sh
+
+NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
+  -profile local_vm,singularity \
+  --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
   --bfile /absolute/path/to/study_prefix \
   --cohort_name cohort_a \
   --genome_build GRCh37 \
-  --output_dir results/cohort_a \
+  --output_dir /absolute/path/to/results/cohort_a \
   -resume
 ```
 
-The first successful host-side run automatically seeds `.runtime_downloads/` with the required PLINK 2 binary, liftOver binary, chain files, and 1000G reference. That cache can then be reused across runs or copied to an offline host.
+For Slurm, replace `local_vm` with `slurm`. The included [scheduler template](scripts/submit_CVDLinkGenotypeQC_pipeline_template.sh) uses the staged local SIF by default.
 
-### Single Docker image
+The `NXF_OFFLINE=TRUE` value set by `offline-env.sh` prevents Nextflow from downloading pipeline code or runtime components. With a local SIF path, no task needs registry access and genotype data stays on the offline machine or cluster.
 
-Build the image:
+### Local Docker Run
+
+Docker is convenient for a connected workstation. Pull the published image:
 
 ```bash
-docker buildx build --platform linux/amd64 --load -t genotypeqc:latest .
+docker pull ghcr.io/urmovosa/genotypeqc:latest
 ```
 
 Run with VCF input. The image entrypoint adds `-profile single_docker` automatically:
@@ -80,7 +106,7 @@ docker run --rm -it \
   --platform linux/amd64 \
   -v "$PWD:/workspace" \
   -v /absolute/path/to/input:/input:ro \
-  genotypeqc:latest \
+  ghcr.io/urmovosa/genotypeqc:latest \
   --vcf /input/imputed_vcfs \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
@@ -92,16 +118,29 @@ Notes:
 
 - Mount a writable `/workspace` so Nextflow can persist `.nextflow/`, `work/`, and outputs between runs.
 - On Apple Silicon, build and run the image as `linux/amd64` because the bundled runtime is `x86_64`.
-- In `single_docker`, the PLINK binaries, liftOver executable, chain files, and 1000G reference are already bundled.
+- The image already contains the complete pipeline runtime.
 
-### Scheduler runs
+### Development-Mode Host Run
 
-Use the generic scheduler template in `submit_GenotypeQC_pipeline_template.sh` and adjust the profile for your environment:
+Running without a container is for development only. It requires R and all pipeline-specific binaries and reference data on the host. Prepare the development cache on a connected Linux x86_64 machine:
 
-- Slurm: `-profile slurm,singularity`
-- PBS/TORQUE: `-profile pbs,singularity`
-- SGE: `-profile sge,singularity`
-- Single host without scheduler: `-profile local_vm,singularity`
+
+```bash
+scripts/offline_stage.sh --platform linux-x86_64 --development-runtime-cache
+```
+
+Then run locally:
+
+```bash
+NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
+  -profile local_vm \
+  --runtime_cache_dir .offline_bundle/runtime_cache \
+  --bfile /absolute/path/to/study_prefix \
+  --cohort_name cohort_a \
+  --genome_build GRCh37 \
+  --output_dir /absolute/path/to/results/cohort_a \
+  -resume
+```
 
 ## Required Arguments
 
@@ -117,12 +156,6 @@ Use the generic scheduler template in `submit_GenotypeQC_pipeline_template.sh` a
 - `--inclusion_list` File with sample IDs to keep.
 - `--exclusion_list` File with sample IDs to remove.
 - `--additional_covariates` Tab-separated file with extra covariates. The first column must be `SampleID`.
-- `--runtime_cache_dir` Host-side cache for auto-downloaded runtime assets. Default: `$baseDir/.runtime_downloads`.
-- `--plink2_executable` Override the PLINK 2 binary path.
-- `--plink_executable` Override the PLINK-compatible binary path. By default host runs reuse the cached PLINK 2 binary.
-- `--reference_1000g_folder` Override the 1000G reference directory.
-- `--chain_path` Override the directory containing `hg19ToHg38.over.chain.gz` and `hg38ToHg19.over.chain.gz`.
-- `--liftover_executable` Override the UCSC liftOver binary path.
 - `--qc_out_s` Outlierness threshold for ancestry outlier detection. Default: `0.4`.
 - `--qc_out_sd` PC-based outlier threshold in SD units. Default: `3`.
 - `--qc_hwe` HWE threshold for genotype QC. Default: `1e-6`.
@@ -133,18 +166,7 @@ Use the generic scheduler template in `submit_GenotypeQC_pipeline_template.sh` a
 - `--vcf_imp_field` INFO sub-field containing imputation quality. Default: `R2`.
 - `--vcf_genotype_field` Optional INFO sub-field indicating typed/genotyped vs imputed variants.
 
-## Offline Use
-
-Host and scheduler runs can be taken offline after the runtime cache has been prepared.
-
-Two supported preparation paths:
-
-1. Run the pipeline once online and reuse the populated `.runtime_downloads/` cache.
-2. Preload the cache with `scripts/offline_fetch.sh`.
-
-Detailed instructions are in `docs/OFFLINE.md`.
-
-If you use the bundled Docker image, the required runtime assets are already inside the image and no extra cache preparation is needed.
+Development-only runtime options are documented in [scripts/OFFLINE.md](scripts/OFFLINE.md).
 
 ## Outputs
 

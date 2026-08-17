@@ -1,85 +1,90 @@
 # Offline Host And Scheduler Use
 
-If you use the bundled Docker image, the runtime assets are already inside the image. This document is for host or scheduler runs outside that image.
+If you use the bundled Docker image, the runtime assets are already inside the image. This document is for host or scheduler runs outside that image, especially on privacy-sensitive clusters that must stay offline during analysis.
 
-## Runtime Cache Layout
+## Recommended Staging Flow
 
-Host runs use a persistent runtime cache. The default location is `.runtime_downloads/` in the repo, but you can override it with `--runtime_cache_dir`.
+Use the staging helper on a connected machine before you move to the offline environment:
 
-Expected layout:
-
-```text
-RUNTIME_CACHE/
-  bin/
-    plink2
-    liftOver
-  reference_1000g/
-    1000G_phase3_common_norel.bed
-    1000G_phase3_common_norel.bim
-    1000G_phase3_common_norel.fam
-  chain/
-    hg19ToHg38.over.chain.gz
-    hg38ToHg19.over.chain.gz
+```bash
+scripts/offline_stage.sh --platform linux-x86_64
 ```
 
-The pipeline uses the cached `plink2` binary for both PLINK-compatible and PLINK 2 calls unless you override `--plink_executable` explicitly.
+By default this writes a bundle to `.offline_bundle/` in the repository checkout. The bundle contains:
 
-## Preparing The Cache Online
+- `containers/genotypeqc_latest.sif` for Apptainer/Singularity runs
+- `nextflow_home/` warmed while still online
+- `offline-env.sh` with the offline environment variables
+- `STAGING_SUMMARY.txt` with copy and run instructions
 
-Choose one of the following:
+The public image contains R, PLINK2, liftOver, chain files, and the 1000G reference. The default bundle therefore does not download a duplicate host runtime cache.
 
-1. Run the pipeline once while online. Missing runtime assets are downloaded into the cache automatically.
-2. Preload the cache with `scripts/offline_fetch.sh /path/to/runtime_cache`.
+The helper does not install general runtimes. Instead it reports whether Java, Nextflow, Apptainer or Singularity, and R are present on the staging host and tells you which pieces could not be prepared. Java, Nextflow, and Apptainer or Singularity are required on both the staging and offline hosts. R is only required on the host for development-mode runs.
 
-The helper script downloads:
+The recommended target for an offline cluster is `linux-x86_64`. Stage on a connected Linux x86_64 machine whenever possible so the downloaded helper binaries match the cluster.
 
-- PLINK 2 for the current host platform
-- UCSC `liftOver` for the current host platform
-- `hg19ToHg38` and `hg38ToHg19` chain files
-- the 1000G reference via `bigsnpr::download_1000G()`
+## What The Bundle Prepares
+
+The staging helper pulls the published SIF image locally and warms the required Nextflow runtime. The SIF already contains the complete pipeline runtime, so production runs do not need a separate PLINK, liftOver, chain-file, or 1000G cache.
 
 ## Moving To An Offline Host
 
-Copy these items to the offline machine:
+If the staging machine and the offline machine are different, copy:
 
 - the repository checkout
-- the prepared runtime cache directory
-- the Nextflow executable if it is not already installed locally
-- `singularity_img/` if you intend to use the `singularity` profile offline
+- the entire `.offline_bundle/` directory produced by `scripts/offline_stage.sh`
+- the Nextflow launcher if the offline machine does not already provide `nextflow`
+
+The bundle summary printed by the helper includes the exact staged paths.
 
 ## Running Offline
 
-Example host run:
+On the offline machine:
 
 ```bash
-export NXF_OFFLINE=TRUE
-export NXF_HOME=/path/to/nxf_home
-
-NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
-  -profile local_vm \
-  --vcf /absolute/path/to/imputed_vcfs \
-  --cohort_name cohort_a \
-  --genome_build GRCh38 \
-  --runtime_cache_dir /absolute/path/to/runtime_cache \
-  --output_dir /absolute/path/to/results/cohort_a \
-  -resume
+source /path/to/GenotypeQC/.offline_bundle/offline-env.sh
 ```
 
 Example scheduler run:
 
 ```bash
-export NXF_OFFLINE=TRUE
-export NXF_HOME=/path/to/nxf_home
-export SINGULARITY_CACHEDIR=/path/to/singularitycache
-
-NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
+NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   -profile slurm,singularity \
+  --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
   --vcf /absolute/path/to/imputed_vcfs \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
-  --runtime_cache_dir /absolute/path/to/runtime_cache \
   --output_dir /absolute/path/to/results/cohort_a \
   -resume
 ```
 
-If you keep the standard cache layout, you do not need to pass `--plink_executable`, `--plink2_executable`, `--reference_1000g_folder`, `--chain_path`, or `--liftover_executable` separately.
+## Development-Mode Host Runs
+
+Non-container runs are intended for development. They require R, PLINK2, liftOver, the chain files, and the 1000G reference on the host. To prepare that separate cache, use:
+
+```bash
+scripts/offline_stage.sh --platform linux-x86_64 --development-runtime-cache
+```
+
+Example development host run:
+
+```bash
+NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
+  -profile local_vm \
+  --runtime_cache_dir /path/to/GenotypeQC/.offline_bundle/runtime_cache \
+  --bfile /absolute/path/to/study_prefix \
+  --cohort_name cohort_a \
+  --genome_build GRCh37 \
+  --output_dir /absolute/path/to/results/cohort_a \
+  -resume
+```
+
+If you keep the standard staged layout, you do not need to pass `--plink_executable`, `--plink2_executable`, `--reference_1000g_folder`, `--chain_path`, or `--liftover_executable` separately.
+
+## Runtime-Cache Only Mode
+
+If you only want the development runtime cache and do not want the full offline bundle, you can still run the lower-level helper directly:
+
+```bash
+scripts/offline_fetch.sh --platform linux-x86_64 /path/to/runtime_cache
+```

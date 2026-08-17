@@ -27,20 +27,22 @@ VCF_DIR="/absolute/path/to/imputed_vcfs"
 COHORT_NAME="cohort_a"
 GENOME_BUILD="GRCh38"
 OUTPUT_DIR="${REPO_DIR}/results/${COHORT_NAME}"
-RUNTIME_CACHE_DIR="${REPO_DIR}/.runtime_downloads"
+OFFLINE_BUNDLE_DIR="${REPO_DIR}/.offline_bundle"
+CONTAINER_IMAGE="${OFFLINE_BUNDLE_DIR}/containers/genotypeqc_latest.sif"
 
 # Keep Nextflow and Singularity caches writable outside your home directory.
-export SINGULARITY_CACHEDIR="${REPO_DIR}/singularitycache"
-export NXF_HOME="${REPO_DIR}/nextflowcache"
+export SINGULARITY_CACHEDIR="${OFFLINE_BUNDLE_DIR}/singularity_cache"
+export NXF_HOME="${OFFLINE_BUNDLE_DIR}/nextflow_home"
 
-# Uncomment for fully offline reruns after the runtime cache and container image are staged.
-# export NXF_OFFLINE=TRUE
+# Prepare OFFLINE_BUNDLE_DIR first on a connected staging machine with:
+#   scripts/offline_stage.sh --platform linux-x86_64
+export NXF_OFFLINE=TRUE
 
 NXF_SYNTAX_PARSER=v1 "${NEXTFLOW_BIN}" run "${REPO_DIR}/main.nf" \
   --vcf "${VCF_DIR}" \
   --cohort_name "${COHORT_NAME}" \
   --genome_build "${GENOME_BUILD}" \
   --output_dir "${OUTPUT_DIR}" \
-  --runtime_cache_dir "${RUNTIME_CACHE_DIR}" \
+  --container_image "${CONTAINER_IMAGE}" \
   -profile slurm,singularity \
   -resume
