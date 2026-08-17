@@ -35,7 +35,9 @@ Bundled static resources kept in the repo:
 - `data/unrelated_reference_samples_ids.txt`
 - `data/validation_snps.tsv`
 
-The public container image includes R, PLINK2, liftOver, chain files, and the 1000G reference. Production runs do not download runtime assets or send input data over the network.
+The public container image includes R, PLINK2, and the 1000G reference. During staging, the script retrieves UCSC LiftOver and chain files into a local `offline_runtime/` bundle. Production runs do not download assets or send input data over the network.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the included-component notices and the separate terms that apply to locally staged UCSC assets.
 
 ## Quick Start
 
@@ -51,7 +53,7 @@ cd GenotypeQC
 scripts/offline_stage.sh --platform linux-x86_64
 ```
 
-The script reports missing Java, Nextflow, and Apptainer or Singularity. When it completes, `.offline_bundle/` contains a local SIF image, warmed Nextflow runtime, and `offline-env.sh`.
+The script reports missing Java, Nextflow, and Apptainer or Singularity. When it completes, `.offline_bundle/` contains a local SIF image, local UCSC LiftOver assets, warmed Nextflow runtime, and `offline-env.sh`.
 
 To use a separate offline cluster, copy both the repository checkout and `.offline_bundle/` to the cluster. Also copy a Nextflow launcher if the cluster does not provide `nextflow`.
 
@@ -65,6 +67,7 @@ source /path/to/GenotypeQC/.offline_bundle/offline-env.sh
 NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   -profile local_vm,singularity \
   --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
+  --offline_runtime_dir "$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
   --vcf /absolute/path/to/imputed_vcfs \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
@@ -80,6 +83,7 @@ source /path/to/GenotypeQC/.offline_bundle/offline-env.sh
 NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   -profile local_vm,singularity \
   --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
+  --offline_runtime_dir "$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
   --bfile /absolute/path/to/study_prefix \
   --cohort_name cohort_a \
   --genome_build GRCh37 \
@@ -106,6 +110,8 @@ docker run --rm -it \
   --platform linux/amd64 \
   -v "$PWD:/workspace" \
   -v /absolute/path/to/input:/input:ro \
+  -v /absolute/path/to/offline_runtime:/offline-runtime:ro \
+  -e GENOTYPEQC_OFFLINE_RUNTIME_DIR=/offline-runtime \
   ghcr.io/urmovosa/genotypeqc:latest \
   --vcf /input/imputed_vcfs \
   --cohort_name cohort_a \
@@ -118,7 +124,7 @@ Notes:
 
 - Mount a writable `/workspace` so Nextflow can persist `.nextflow/`, `work/`, and outputs between runs.
 - On Apple Silicon, build and run the image as `linux/amd64` because the bundled runtime is `x86_64`.
-- The image already contains the complete pipeline runtime.
+- The image contains the public runtime; LiftOver and chain files come from the read-only `offline_runtime/` mount.
 
 ### Development-Mode Host Run
 
@@ -134,7 +140,7 @@ Then run locally:
 ```bash
 NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
   -profile local_vm \
-  --runtime_cache_dir .offline_bundle/runtime_cache \
+  --runtime_cache_dir .offline_bundle/development_runtime_cache \
   --bfile /absolute/path/to/study_prefix \
   --cohort_name cohort_a \
   --genome_build GRCh37 \
@@ -195,6 +201,12 @@ Notes:
 - Inspect `pipeline_info/GenotypeQC_report.html` for task-level failures and work directories.
 - For a failed task, inspect `.command.sh`, `.command.log`, and `.command.err` in the corresponding `work/` directory.
 
+## License
+
+GenotypeQC source code is licensed under the GNU General Public License, version 3 or later. See [LICENSE](LICENSE).
+
+The license applies to this repository's code. Container dependencies, the 1000 Genomes reference, and the separately staged `offline_runtime/` assets remain subject to their own terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Acknowledgements
 
 Genotype QC and covariate preparations make extensive use of [bigsnpr](https://privefl.github.io/bigsnpr/) and [PLINK 2](https://www.cog-genomics.org/plink/2.0/).
@@ -206,5 +218,5 @@ Genotype QC and covariate preparations make extensive use of [bigsnpr](https://p
 
 ## Contacts
 
-- Urmo Vosa: urmo.vosa at gmail.com
+- Urmo Võsa: urmo.vosa at gmail.com
 - Andres Veidenberg: andres.veidenberg at gmail.com

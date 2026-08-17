@@ -10,6 +10,7 @@ singularity_img/
 plink/
 data/outputfolder_gen/
 data/pipeline_info/
+bin/liftOver
 __pycache__/
 *.py[cod]
 .DS_Store

@@ -35,10 +35,11 @@ def helpMessage() {
       --reference_unrelated_samples File with unrelated 1000G reference sample indices. Defaults to the bundled file at $baseDir/data/unrelated_reference_samples_ids.txt.
       --reference_populations       File with 1000G sample population labels. Defaults to the bundled file at $baseDir/data/1000G_pops.txt.
       --plink_executable            Path to a PLINK-compatible executable. Defaults to the cached PLINK 2 binary in $baseDir/.runtime_downloads/bin/.
-      --plink2_executable           Path to plink2 executable. Defaults to $baseDir/.runtime_downloads/bin/plink2 for host runs, or the bundled binary in single_docker.
+      --offline_runtime_dir          Path to local offline runtime assets, containing bin/liftOver and chain/. Required for containerized runs; defaults to $baseDir/.offline_runtime.
+      --plink2_executable           Path to plink2 executable. Defaults to $baseDir/.runtime_downloads/bin/plink2 for host runs, or the bundled binary in containerized runs.
       --reference_1000g_folder      Path to 1000g reference folder. Defaults to $baseDir/.runtime_downloads/reference_1000g for host runs, or the bundled reference in single_docker.
-      --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. Defaults to $baseDir/.runtime_downloads/chain for host runs, or the bundled files in single_docker.
-      --liftover_executable         Path to the UCSC liftOver executable. Defaults to $baseDir/.runtime_downloads/bin/liftOver for host runs, or the bundled binary in single_docker.
+      --chain_path                  Path to folder containing hg19ToHg38 and hg38ToHg19 chain files. Defaults to $baseDir/.runtime_downloads/chain for host runs, or the local restricted-runtime bundle in containerized runs.
+      --liftover_executable         Path to the UCSC liftOver executable. Defaults to $baseDir/.runtime_downloads/bin/liftOver for host runs, or the local restricted-runtime bundle in containerized runs.
       --runtime_cache_dir           Host-side cache used for auto-downloaded runtime assets (default: $baseDir/.runtime_downloads).
       --qc_hwe                      HWE p-value threshold for genotype QC (default: 1e-6).
       --qc_maf                      MAF threshold for genotype QC (default: 0.01).
@@ -58,11 +59,11 @@ params.embedded_runtime = params.embedded_runtime ?: false
 params.runtime_cache_dir = params.runtime_cache_dir ?: "$baseDir/.runtime_downloads"
 
 if (params.embedded_runtime) {
-  params.liftover_executable = params.liftover_executable ?: "${params.embedded_runtime_root}/bin/liftOver"
   params.plink_executable = params.plink_executable ?: "${params.embedded_runtime_root}/bin/plink"
   params.plink2_executable = params.plink2_executable ?: "${params.embedded_runtime_root}/bin/plink2"
   params.reference_1000g_folder = params.reference_1000g_folder ?: "${params.embedded_runtime_root}/reference_1000g"
-  params.chain_path = params.chain_path ?: "${params.embedded_runtime_root}/chain"
+  params.chain_path = params.chain_path ?: "${params.offline_runtime_dir}/chain"
+  params.liftover_executable = params.liftover_executable ?: "${params.offline_runtime_dir}/bin/liftOver"
 } else {
   params.plink2_executable = params.plink2_executable ?: "${params.runtime_cache_dir}/bin/plink2"
   params.plink_executable = params.plink_executable ?: params.plink2_executable
@@ -74,8 +75,8 @@ if (params.embedded_runtime) {
 def resolved_plink_executable = params.plink_executable ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/bin/plink" : "${params.runtime_cache_dir}/bin/plink2")
 def resolved_plink2_executable = params.plink2_executable ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/bin/plink2" : "${params.runtime_cache_dir}/bin/plink2")
 def resolved_reference_1000g_folder = params.reference_1000g_folder ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/reference_1000g" : "${params.runtime_cache_dir}/reference_1000g")
-def resolved_chain_path = params.chain_path ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/chain" : "${params.runtime_cache_dir}/chain")
-def resolved_liftover_executable = params.liftover_executable ?: (params.embedded_runtime ? "${params.embedded_runtime_root}/bin/liftOver" : "${params.runtime_cache_dir}/bin/liftOver")
+def resolved_chain_path = params.chain_path ?: (params.embedded_runtime ? "${params.offline_runtime_dir}/chain" : "${params.runtime_cache_dir}/chain")
+def resolved_liftover_executable = params.liftover_executable ?: (params.embedded_runtime ? "${params.offline_runtime_dir}/bin/liftOver" : "${params.runtime_cache_dir}/bin/liftOver")
 def resolved_runtime_asset_root = params.embedded_runtime ? params.embedded_runtime_root : params.runtime_cache_dir
 
 // Define set of accepted genome builds:

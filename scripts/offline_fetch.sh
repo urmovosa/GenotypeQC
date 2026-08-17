@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<EOF >&2
-Usage: $0 [--platform PLATFORM] [RUNTIME_CACHE_DIR]
+Usage: $0 [--platform PLATFORM] [--restricted-assets-only|--skip-restricted-assets] [RUNTIME_CACHE_DIR]
 
 Supported PLATFORM values:
   linux-x86_64
@@ -11,6 +11,9 @@ Supported PLATFORM values:
   darwin-x86_64
 
 When --platform is omitted, the current host platform is used.
+
+Use --restricted-assets-only to stage only UCSC LiftOver and chain files.
+Use --skip-restricted-assets when building the public container image.
 EOF
 }
 
@@ -37,6 +40,8 @@ normalize_platform() {
 
 TARGET_PLATFORM="${GENOTYPEQC_TARGET_PLATFORM:-$(normalize_platform "$(uname -s)" "$(uname -m)")}"
 RUNTIME_CACHE_DIR=""
+RESTRICTED_ASSETS_ONLY=false
+SKIP_RESTRICTED_ASSETS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,6 +62,14 @@ while [[ $# -gt 0 ]]; do
       TARGET_PLATFORM="${1#*=}"
       shift
       ;;
+    --restricted-assets-only)
+      RESTRICTED_ASSETS_ONLY=true
+      shift
+      ;;
+    --skip-restricted-assets)
+      SKIP_RESTRICTED_ASSETS=true
+      shift
+      ;;
     -*)
       echo "Unknown option: $1" >&2
       usage
@@ -73,6 +86,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${RESTRICTED_ASSETS_ONLY}" == true && "${SKIP_RESTRICTED_ASSETS}" == true ]]; then
+  echo "--restricted-assets-only and --skip-restricted-assets cannot be used together." >&2
+  exit 1
+fi
 
 RUNTIME_CACHE_DIR="${RUNTIME_CACHE_DIR:-${REPO_ROOT}/.runtime_downloads}"
 
@@ -181,43 +199,44 @@ mkdir -p "${RUNTIME_CACHE_DIR}/bin" \
          "${RUNTIME_CACHE_DIR}/chain" \
          "${RUNTIME_CACHE_DIR}/reference_1000g"
 
-download_zip_binary "$(detect_plink2_url)" "${RUNTIME_CACHE_DIR}/bin/plink2" "plink2"
-ln -sf plink2 "${RUNTIME_CACHE_DIR}/bin/plink"
+if [[ "${RESTRICTED_ASSETS_ONLY}" == false ]]; then
+  download_zip_binary "$(detect_plink2_url)" "${RUNTIME_CACHE_DIR}/bin/plink2" "plink2"
+  ln -sf plink2 "${RUNTIME_CACHE_DIR}/bin/plink"
 
-download_executable_if_needed "$(detect_liftover_url)" "${RUNTIME_CACHE_DIR}/bin/liftOver"
+  if [[ ! -f "${RUNTIME_CACHE_DIR}/reference_1000g/1000G_phase3_common_norel.bed" || \
+        ! -f "${RUNTIME_CACHE_DIR}/reference_1000g/1000G_phase3_common_norel.bim" || \
+        ! -f "${RUNTIME_CACHE_DIR}/reference_1000g/1000G_phase3_common_norel.fam" ]]; then
+    if ! command -v Rscript >/dev/null 2>&1; then
+      echo "Rscript is required to download the 1000G reference cache." >&2
+      exit 1
+    fi
 
-download_file_if_missing \
-  "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz" \
-  "${RUNTIME_CACHE_DIR}/chain/hg19ToHg38.over.chain.gz"
-
-download_file_if_missing \
-  "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz" \
-  "${RUNTIME_CACHE_DIR}/chain/hg38ToHg19.over.chain.gz"
-
-if [[ ! -f "${RUNTIME_CACHE_DIR}/reference_1000g/1000G_phase3_common_norel.bed" || \
-      ! -f "${RUNTIME_CACHE_DIR}/reference_1000g/1000G_phase3_common_norel.bim" || \
-      ! -f "${RUNTIME_CACHE_DIR}/reference_1000g/1000G_phase3_common_norel.fam" ]]; then
-  if ! command -v Rscript >/dev/null 2>&1; then
-    echo "Rscript is required to download the 1000G reference cache." >&2
-    exit 1
+    Rscript -e "if (!requireNamespace('bigsnpr', quietly = TRUE)) stop('bigsnpr is required in the active R environment'); library(bigsnpr); download_1000G('${RUNTIME_CACHE_DIR}/reference_1000g')"
   fi
+fi
 
-  Rscript -e "if (!requireNamespace('bigsnpr', quietly = TRUE)) stop('bigsnpr is required in the active R environment'); library(bigsnpr); download_1000G('${RUNTIME_CACHE_DIR}/reference_1000g')"
+if [[ "${SKIP_RESTRICTED_ASSETS}" == false ]]; then
+  download_executable_if_needed "$(detect_liftover_url)" "${RUNTIME_CACHE_DIR}/bin/liftOver"
+
+  download_file_if_missing \
+    "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz" \
+    "${RUNTIME_CACHE_DIR}/chain/hg19ToHg38.over.chain.gz"
+
+  download_file_if_missing \
+    "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz" \
+    "${RUNTIME_CACHE_DIR}/chain/hg38ToHg19.over.chain.gz"
 fi
 
 cat <<EOF
-Runtime cache prepared at:
+Runtime assets prepared at:
   ${RUNTIME_CACHE_DIR}
 
 Target platform:
 - ${TARGET_PLATFORM}
 
 Cached assets:
-- ${RUNTIME_CACHE_DIR}/bin/plink2
-- ${RUNTIME_CACHE_DIR}/bin/liftOver
-- ${RUNTIME_CACHE_DIR}/chain/hg19ToHg38.over.chain.gz
-- ${RUNTIME_CACHE_DIR}/chain/hg38ToHg19.over.chain.gz
-- ${RUNTIME_CACHE_DIR}/reference_1000g/1000G_phase3_common_norel.*
+- unrestricted runtime: $([[ "${RESTRICTED_ASSETS_ONLY}" == true ]] && echo "not requested" || echo "${RUNTIME_CACHE_DIR}/bin/plink2 and ${RUNTIME_CACHE_DIR}/reference_1000g/")
+- restricted assets: $([[ "${SKIP_RESTRICTED_ASSETS}" == true ]] && echo "not requested" || echo "${RUNTIME_CACHE_DIR}/bin/liftOver and ${RUNTIME_CACHE_DIR}/chain/")
 
 Use this cache for later offline runs with:
   --runtime_cache_dir ${RUNTIME_CACHE_DIR}

@@ -29,6 +29,7 @@ GENOME_BUILD="GRCh38"
 OUTPUT_DIR="${REPO_DIR}/results/${COHORT_NAME}"
 OFFLINE_BUNDLE_DIR="${REPO_DIR}/.offline_bundle"
 CONTAINER_IMAGE="${OFFLINE_BUNDLE_DIR}/containers/genotypeqc_latest.sif"
+OFFLINE_RUNTIME_DIR="${OFFLINE_BUNDLE_DIR}/offline_runtime"
 
 # Keep Nextflow and Singularity caches writable outside your home directory.
 export SINGULARITY_CACHEDIR="${OFFLINE_BUNDLE_DIR}/singularity_cache"
@@ -44,5 +45,6 @@ NXF_SYNTAX_PARSER=v1 "${NEXTFLOW_BIN}" run "${REPO_DIR}/main.nf" \
   --genome_build "${GENOME_BUILD}" \
   --output_dir "${OUTPUT_DIR}" \
   --container_image "${CONTAINER_IMAGE}" \
+  --offline_runtime_dir "${OFFLINE_RUNTIME_DIR}" \
   -profile slurm,singularity \
   -resume

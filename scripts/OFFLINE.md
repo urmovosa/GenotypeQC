@@ -13,11 +13,12 @@ scripts/offline_stage.sh --platform linux-x86_64
 By default this writes a bundle to `.offline_bundle/` in the repository checkout. The bundle contains:
 
 - `containers/genotypeqc_latest.sif` for Apptainer/Singularity runs
+- `offline_runtime/` with UCSC LiftOver and chain files for the local offline deployment
 - `nextflow_home/` warmed while still online
 - `offline-env.sh` with the offline environment variables
 - `STAGING_SUMMARY.txt` with copy and run instructions
 
-The public image contains R, PLINK2, liftOver, chain files, and the 1000G reference. The default bundle therefore does not download a duplicate host runtime cache.
+The public image contains R, PLINK2, and the 1000G reference. The staging bundle separately retrieves UCSC LiftOver and chain files because their redistribution terms are more restrictive. Do not republish `offline_runtime/` without confirming that the intended use complies with UCSC's terms.
 
 The helper does not install general runtimes. Instead it reports whether Java, Nextflow, Apptainer or Singularity, and R are present on the staging host and tells you which pieces could not be prepared. Java, Nextflow, and Apptainer or Singularity are required on both the staging and offline hosts. R is only required on the host for development-mode runs.
 
@@ -25,7 +26,7 @@ The recommended target for an offline cluster is `linux-x86_64`. Stage on a conn
 
 ## What The Bundle Prepares
 
-The staging helper pulls the published SIF image locally and warms the required Nextflow runtime. The SIF already contains the complete pipeline runtime, so production runs do not need a separate PLINK, liftOver, chain-file, or 1000G cache.
+The staging helper pulls the published SIF image locally, prepares the local UCSC LiftOver assets, and warms the required Nextflow runtime. The public image provides PLINK2 and the 1000G reference; only the restricted LiftOver assets remain outside the image.
 
 ## Moving To An Offline Host
 
@@ -51,6 +52,7 @@ Example scheduler run:
 NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   -profile slurm,singularity \
   --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
+  --offline_runtime_dir "$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
   --vcf /absolute/path/to/imputed_vcfs \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
@@ -71,7 +73,7 @@ Example development host run:
 ```bash
 NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   -profile local_vm \
-  --runtime_cache_dir /path/to/GenotypeQC/.offline_bundle/runtime_cache \
+  --runtime_cache_dir /path/to/GenotypeQC/.offline_bundle/development_runtime_cache \
   --bfile /absolute/path/to/study_prefix \
   --cohort_name cohort_a \
   --genome_build GRCh37 \

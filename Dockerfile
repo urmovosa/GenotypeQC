@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     file \
+    fonts-dejavu-core \
     gfortran \
     git \
     libcurl4-openssl-dev \
@@ -57,8 +58,8 @@ RUN curl -fsSL https://get.nextflow.io | bash \
 
 COPY . /opt/genotypeqc
 
-RUN chmod +x /opt/genotypeqc/docker-entrypoint.sh /opt/genotypeqc/scripts/offline_fetch.sh /opt/genotypeqc/bin/liftOver \
- && /opt/genotypeqc/scripts/offline_fetch.sh /opt/genotypeqc/.runtime
+RUN chmod +x /opt/genotypeqc/docker-entrypoint.sh /opt/genotypeqc/scripts/offline_fetch.sh \
+ && /opt/genotypeqc/scripts/offline_fetch.sh --skip-restricted-assets /opt/genotypeqc/.runtime
 
 ENV GENOTYPEQC_HOME=/opt/genotypeqc
 ENV PATH="/opt/genotypeqc/.runtime/bin:/opt/conda/envs/genotypeqc/bin:/opt/conda/bin:/usr/local/bin:${PATH}"

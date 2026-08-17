@@ -21,10 +21,10 @@ Defaults:
 - container source: oras://ghcr.io/urmovosa/genotypeqc-sif:latest
 
 The script reports whether Java, Nextflow, Apptainer/Singularity, and R are
-available on the staging machine. The public image contains R and all
-pipeline-specific runtime assets; R on the host is only needed when preparing
-the optional development runtime cache. The script does not install general
-runtimes.
+available on the staging machine. The public image contains R, PLINK2, and the
+1000G reference; UCSC LiftOver assets are staged locally. R on the host is only
+needed when preparing the optional development runtime cache. The script does
+not install general runtimes.
 EOF
 }
 
@@ -128,7 +128,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-RUNTIME_CACHE_DIR="${BUNDLE_DIR}/runtime_cache"
+OFFLINE_RUNTIME_DIR="${BUNDLE_DIR}/offline_runtime"
+DEVELOPMENT_RUNTIME_CACHE_DIR="${BUNDLE_DIR}/development_runtime_cache"
 CONTAINER_DIR="${BUNDLE_DIR}/containers"
 CONTAINER_IMAGE_PATH="${CONTAINER_DIR}/genotypeqc_latest.sif"
 NEXTFLOW_HOME_DIR="${BUNDLE_DIR}/nextflow_home"
@@ -164,7 +165,8 @@ if [[ -n "${RSCRIPT_BIN}" ]]; then
   r_status="found at ${RSCRIPT_BIN}"
 fi
 
-runtime_cache_status="not requested (container image provides runtime assets)"
+offline_runtime_status="not started"
+runtime_cache_status="not requested"
 container_status="not started"
 nextflow_home_status="not started"
 overall_status="ready"
@@ -174,9 +176,16 @@ if [[ "${TARGET_PLATFORM}" != "linux-x86_64" ]]; then
   overall_status="incomplete"
 fi
 
+if "${SCRIPT_DIR}/offline_fetch.sh" --platform "${TARGET_PLATFORM}" --restricted-assets-only "${OFFLINE_RUNTIME_DIR}"; then
+  offline_runtime_status="ready at ${OFFLINE_RUNTIME_DIR}"
+else
+  offline_runtime_status="failed"
+  overall_status="incomplete"
+fi
+
 if [[ "${PREPARE_DEVELOPMENT_RUNTIME_CACHE}" == true ]]; then
-  if "${SCRIPT_DIR}/offline_fetch.sh" --platform "${TARGET_PLATFORM}" "${RUNTIME_CACHE_DIR}"; then
-    runtime_cache_status="ready at ${RUNTIME_CACHE_DIR}"
+  if "${SCRIPT_DIR}/offline_fetch.sh" --platform "${TARGET_PLATFORM}" "${DEVELOPMENT_RUNTIME_CACHE_DIR}"; then
+    runtime_cache_status="ready at ${DEVELOPMENT_RUNTIME_CACHE_DIR}"
   else
     runtime_cache_status="failed"
     overall_status="incomplete"
@@ -221,6 +230,7 @@ export NXF_HOME="${GENOTYPEQC_BUNDLE_DIR}/nextflow_home"
 export SINGULARITY_CACHEDIR="${GENOTYPEQC_BUNDLE_DIR}/singularity_cache"
 export APPTAINER_CACHEDIR="${GENOTYPEQC_BUNDLE_DIR}/singularity_cache"
 export GENOTYPEQC_CONTAINER_IMAGE="${GENOTYPEQC_BUNDLE_DIR}/containers/genotypeqc_latest.sif"
+export GENOTYPEQC_OFFLINE_RUNTIME_DIR="${GENOTYPEQC_BUNDLE_DIR}/offline_runtime"
 EOF
 chmod +x "${ENV_FILE}"
 
@@ -247,7 +257,8 @@ General runtimes on the staging host:
 - Rscript: ${r_status}
 
 Prepared assets:
-- runtime cache: ${runtime_cache_status}
+- offline runtime assets: ${offline_runtime_status}
+- development runtime cache: ${runtime_cache_status}
 - local SIF image: ${container_status}
 - Nextflow home: ${nextflow_home_status}
 - env helper: ${ENV_FILE}
@@ -264,7 +275,8 @@ Recommended offline run flow:
 
    NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
      -profile slurm,singularity \
-     --container_image "\$GENOTYPEQC_CONTAINER_IMAGE" \
+      --container_image "\$GENOTYPEQC_CONTAINER_IMAGE" \
+      --offline_runtime_dir "\$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
      --vcf /absolute/path/to/imputed_vcfs \
      --cohort_name cohort_a \
      --genome_build GRCh38 \
