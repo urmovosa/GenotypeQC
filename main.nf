@@ -20,6 +20,7 @@ def helpMessage() {
     Required arguments:
       --cohort_name                 Name of the cohort.
       --genome_build                Genome build of the cohort. Either hg18, GRCh36, hg19, GRCh37, hg38 or GRCh38.
+      --data_type                   Input data type: array, imputed or wgs (default: array). Imputed and wgs require --vcf.
       --bfile                       Path to unimputed genotype files in plink bed/bim/fam format (without extensions bed/bim/fam). Required if --vcf is not provided.
       --vcf                         Path to per-chromosome VCF input files. Required if --bfile is not provided.
       --fam                         Optional path to a plink fam file. This is especially helpful for sex annotation of samples in VCF files.
@@ -47,6 +48,7 @@ def helpMessage() {
       --vcf_hwe                     HWE threshold for output VCF filtering (default: 1e-6).
       --vcf_imp                     Imputation quality threshold for output VCF filtering (default: 0.8).
       --vcf_imp_field               INFO sub-field code for storing imputation quality (default: R2).
+      --enable_imputation_filter    Apply the imputation quality filter in imputed mode (default: true).
       --vcf_genotype_field          INFO sub-field code indicating genotyped/typed variants (optional; e.g. typed or imputed).
 
     """.stripIndent()
@@ -81,6 +83,7 @@ def resolved_runtime_asset_root = params.embedded_runtime ? params.embedded_runt
 
 // Define set of accepted genome builds:
 def genome_builds_accepted = ['hg18', 'GRCh36', 'hg19', 'GRCh37', 'hg38', 'GRCh38']
+def data_types_accepted = ['array', 'imputed', 'wgs']
 
 params.vcf = params.vcf ?: ''
 params.bfile = params.bfile ?: ''
@@ -136,6 +139,7 @@ params.qc_out_sd = params.qc_out_sd ?: 3
 params.cohort_name = params.cohort_name ?: ''
 params.output_dir = params.output_dir ?: 'results'
 params.genome_build = params.genome_build ?: 'hg19'
+params.data_type = (params.data_type ?: 'array').toString().toLowerCase()
 
 params.qc_hwe = params.qc_hwe ?: 1e-6
 params.qc_maf = params.qc_maf ?: 0.01
@@ -144,6 +148,9 @@ params.vcf_hwe = params.vcf_hwe ?: 1e-6
 params.vcf_imp = params.vcf_imp ?: 0.8
 params.vcf_imp_field = params.vcf_imp_field ?: 'R2'
 params.vcf_genotype_field = params.vcf_genotype_field ?: ''
+params.enable_imputation_filter = params.enable_imputation_filter == null ? true : params.enable_imputation_filter.toString().toBoolean()
+
+def effective_imputation_filter = params.data_type == 'imputed' && params.enable_imputation_filter
 
 params.inclusion_list = params.inclusion_list ?: ''
 params.exclusion_list = params.exclusion_list ?: ''
@@ -161,6 +168,8 @@ vcf_hwe_ch = Channel.value(params.vcf_hwe)
 vcf_imp_ch = Channel.value(params.vcf_imp)
 vcf_imp_field_ch = Channel.value(params.vcf_imp_field)
 vcf_genotype_field_ch = Channel.value(params.vcf_genotype_field)
+data_type_ch = Channel.value(params.data_type)
+imputation_filter_enabled_ch = Channel.value(effective_imputation_filter)
 
 inclusion_list_ch = Channel.value(params.inclusion_list)
 exclusion_list_ch = Channel.value(params.exclusion_list)
@@ -168,6 +177,15 @@ additional_covariates_ch = Channel.value(params.additional_covariates)
 
 if ((params.genome_build in genome_builds_accepted) == false) {
   exit 1, "[Pipeline error] Genome build $params.genome_build not in accepted genome builds: $genome_builds_accepted \n"
+}
+if ((params.data_type in data_types_accepted) == false) {
+  exit 1, "[Pipeline error] Data type $params.data_type not in accepted data types: $data_types_accepted \n"
+}
+if (params.data_type in ['imputed', 'wgs'] && params.vcf == '') {
+  exit 1, "[Pipeline error] Data type $params.data_type requires per-chromosome VCF input via --vcf.\n"
+}
+if (effective_imputation_filter && !params.vcf_imp_field?.trim()) {
+  exit 1, "[Pipeline error] --vcf_imp_field must be set when imputation filtering is enabled.\n"
 }
 
 
@@ -180,6 +198,7 @@ summary['Pipeline Name']            = 'GenotypeQC'
 summary['Pipeline Version']         = workflow.manifest.version
 summary['PLINK bfile']              = params.bfile
 summary['Genome Build']             = params.genome_build
+summary['Data type']                = params.data_type
 summary['QC HWE threshold']         = params.qc_hwe
 summary['QC MAF threshold']         = params.qc_maf
 summary['VCF MAF threshold']        = params.vcf_maf
@@ -187,6 +206,7 @@ summary['VCF HWE threshold']        = params.vcf_hwe
 summary['VCF INFO minimum']         = params.vcf_imp
 summary['VCF INFO field']           = params.vcf_imp_field
 summary['VCF genotype INFO field']  = params.vcf_genotype_field
+summary['Imputation filter']        = effective_imputation_filter ? 'enabled' : 'disabled'
 summary['QC S threshold']           = params.qc_out_s
 summary['QC SD threshold']          = params.qc_out_sd
 summary['Max Memory']               = params.max_memory
@@ -284,6 +304,8 @@ workflow {
       .combine(vcf_imp_ch)
       .combine(vcf_imp_field_ch)
       .combine(vcf_genotype_field_ch)
+      .combine(data_type_ch)
+      .combine(imputation_filter_enabled_ch)
 
       FILTERFINALVCF(vcf_filter_input_ch)
 
@@ -306,11 +328,15 @@ workflow {
     .combine(additional_covariates_ch)
     .combine(filter_vcf_output_files_ch)
     .combine(vcf_genotype_field_ch)
+    .combine(data_type_ch)
+    .combine(imputation_filter_enabled_ch)
     .map { row ->
       def items = row instanceof List ? row : [row]
       def fixed_inputs = items.take(9)
-      def vcf_filter_outputs = items.size() > 10 ? items[9..-2] : []
-      def genotype_field = items[-1]
+      def vcf_filter_outputs = items.size() > 12 ? items[9..-4] : []
+      def genotype_field = items[-3]
+      def data_type = items[-2]
+      def imputation_filter_enabled = items[-1]
       tuple(
         fixed_inputs[0],
         fixed_inputs[1],
@@ -322,7 +348,9 @@ workflow {
         fixed_inputs[7],
         fixed_inputs[8],
         vcf_filter_outputs,
-        genotype_field
+        genotype_field,
+        data_type,
+        imputation_filter_enabled
       )
     }
 

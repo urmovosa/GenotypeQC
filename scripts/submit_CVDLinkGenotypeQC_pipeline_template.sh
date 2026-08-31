@@ -41,6 +41,7 @@ export NXF_OFFLINE=TRUE
 
 NXF_SYNTAX_PARSER=v1 "${NEXTFLOW_BIN}" run "${REPO_DIR}/main.nf" \
   --vcf "${VCF_DIR}" \
+  --data_type imputed \
   --cohort_name "${COHORT_NAME}" \
   --genome_build "${GENOME_BUILD}" \
   --output_dir "${OUTPUT_DIR}" \

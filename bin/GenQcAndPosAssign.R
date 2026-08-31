@@ -607,10 +607,10 @@ option_list <- list(
     help = paste0("Numeric threshold to declare samples outliers, based on the genotype PCs. ", 
                   "Defaults to 0.4 but should always be visually checked and changed, if needed.")),
     make_option(c("--hwe_threshold"), default = 1e-6,
-    help = paste0("HWE p-value threshold for SNP QC filters. ",
+    help = paste0("HWE p-value threshold for variant QC filters. ",
             "Default 1e-6.")),
         make_option(c("--qc_maf_threshold"), default = 0.01,
-        help = paste0("MAF threshold for PLINK SNP QC filters. ",
+        help = paste0("MAF threshold for PLINK variant QC filters. ",
           "Default 0.01.")),
     make_option(c("--king_threshold"), default = 2^-4.5,
     help = paste0("KING kinship threshold for close relatives removal. ",
@@ -775,7 +775,7 @@ if (!valid_chromosome_count) {
 system(paste0(PLINK2, " --bfile ", bed_simplepath, " --threads 4 --freq 'cols=+pos' --out targetfile"))
 system("gzip targetfile.afreq --force")
 
-summary_table <- qc_summary_row("Raw file", target_bed$ncol, target_bed$nrow)
+summary_table <- qc_summary_row("Input variants", target_bed$ncol, target_bed$nrow)
 
 # Prepare and normalise fam file
 #
@@ -838,7 +838,7 @@ fwrite(data.table(`#FID` = '0', `IID` = samples_to_include$`sample.ID`), "Sample
 temp_QC <- qc_summary_row("Samples after removing exclusion list", target_bed$ncol, nrow(samples_to_include))
 summary_table <- rbind(summary_table, temp_QC)
 
-# Apply the retained sample list before SNP QC.
+# Apply the retained sample list before variant QC.
 system(paste0(PLINK2, " --bfile ", bed_simplepath, " --fam fam_normalized.fam",
 " --output-chr 26 --keep SamplesToInclude.txt --geno 0.05 --make-bed --threads 4 --out ", bed_simplepath, "_filtered"))
 
@@ -890,7 +890,7 @@ check_genome_build(
 )
 
 temp_QC <- qc_summary_row(
-  paste0("SNP CR>0.95; HWE P>", args$hwe_threshold, "; MAF>", args$qc_maf_threshold, "; GENO<0.05; MIND<0.05"),
+  paste0("Variant CR>0.95; HWE P>", args$hwe_threshold, "; MAF>", args$qc_maf_threshold, "; GENO<0.05; MIND<0.05"),
   target_bed$ncol,
   target_bed$nrow
 )
@@ -1532,11 +1532,11 @@ system(paste0(PLINK2, " -bfile ", args$output, "/gen_data_QCd/", bed_simplepath,
 "--make-bed ",
 "--out ", args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation_temp --threads 4"))
 
-# Do final SNP QC (for MAF, etc filters on filtered SNPs)
+# Do final variant QC (for MAF and related filters on retained variants)
 # Remove unfiltered samples
 system(paste0("rm ", args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation.*"))
 
-message("Final SNP QC.")
+message("Final variant QC.")
 
 snp_plinkQC(
   plink.path = PLINK2,
@@ -1611,7 +1611,7 @@ final_samples <- fread(paste0(args$output, "/gen_data_QCd/", bed_simplepath, "_T
                        keepLeadingZeros = TRUE, colClasses = list(character = c(1,2)))
 
 temp_QC <- qc_summary_row(
-  "QCd samples after SNP QC filters on full dataset",
+  "QCd samples after variant QC filters on full dataset",
   bed_qc$ncol,
   nrow(final_samples)
 )
@@ -1619,7 +1619,7 @@ summary_table <- rbind(summary_table, temp_QC)
 
 # Write out final summary
 message("Write out final sample summary table.")
-colnames(summary_table) <- c("Stage", "Nr. of SNPs", "Nr. of genotype samples")
+colnames(summary_table) <- c("Stage", "Nr. of variants", "Nr. of genotype samples")
 fwrite(summary_table, paste0(args$output, "/gen_data_summary/summary_table.txt"), sep = "\t", quote = FALSE)
 
 system("rm *.bed", wait = TRUE, intern = FALSE)

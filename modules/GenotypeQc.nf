@@ -131,7 +131,7 @@ process RenderReport {
   publishDir "${params.output_dir}", mode: 'copy', overwrite: true
 
     input:
-      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), val(additional_covariates), path(vcf_filter_outputs), val(genotype_field)
+      tuple path(output_gen), path(fam), path(ref_af), path(target_af), path(sexcheck), val(stresh), val(sdtresh), path(report), val(additional_covariates), path(vcf_filter_outputs), val(genotype_field), val(data_type), val(imputation_filter_enabled)
 
     output:
       path ('outputfolder_gen/')
@@ -160,6 +160,11 @@ process RenderReport {
     N = "CovariatePCs.txt", 
     S = ${stresh},
     SD = ${sdtresh},
+    data_type = "${data_type}",
+    imputation_filter_enabled = ${imputation_filter_enabled ? 'TRUE' : 'FALSE'},
+    vcf_maf = ${params.vcf_maf},
+    vcf_hwe = ${params.vcf_hwe},
+    vcf_imp = ${params.vcf_imp},
     genotype_field = "${genotype_field}",
     imputation_metric_field = "${params.vcf_imp_field}"))'
 
@@ -172,12 +177,21 @@ process FilterFinalVcf {
   publishDir "${params.output_dir}/vcf_filtering", mode: 'copy', overwrite: true
 
     input:
-      tuple path(vcf), path(filtered_fam), val(maf), val(vcf_hwe_threshold), val(imputation_th), val(info_field), val(genotype_field)
+      tuple path(vcf), path(filtered_fam), val(maf), val(vcf_hwe_threshold), val(imputation_th), val(info_field), val(genotype_field), val(data_type), val(enable_imputation_filter)
 
     output:
       tuple path("*_filtered.vcf.gz"), path("*_filtered.vcf.gz.csi"), path("*_prefilter.stats.txt"), path("*_filtered.stats.txt"), path("*_prefilter.variant_metrics.tsv"), path("*_filtered.variant_metrics.tsv")
 
     script:
+    include_imputation_metric = data_type == 'imputed' && info_field
+    imputation_filter_clause = include_imputation_metric && enable_imputation_filter ? " && INFO/${info_field}>=${imputation_th}" : ""
+    filter_expression = "INFO/MAF>=${maf} && INFO/HWE>=${vcf_hwe_threshold}${imputation_filter_clause}"
+    metric_header = include_imputation_metric ? "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t${info_field}\\tTYPED\\ttyped\\tIMPUTED\\timputed" : "CHROM\\tPOS\\tID\\tMAF\\tHWE\\tTYPED\\ttyped\\tIMPUTED\\timputed"
+    metric_format = include_imputation_metric ? "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed" : "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed"
+    if (genotype_field) {
+      metric_header += "\\t${genotype_field}"
+      metric_format += "\\t%INFO/${genotype_field}"
+    }
     """
     chr=\$(basename ${vcf} | grep -oE '^chr[0-9XYM]+')
     awk '{print \$2}' ${filtered_fam} | sort -u > iids.txt
@@ -188,31 +202,21 @@ process FilterFinalVcf {
     -Ob -o \${chr}_subset.bcf \
     ${vcf}
 
-    # 2) Recalculate INFO tags (MAF, WHE, imputation quality score).
+    # 2) Recalculate cohort-dependent INFO tags.
     bcftools +fill-tags \
     \${chr}_subset.bcf \
     -Ob -o \${chr}_subset.filled.bcf \
     -- -t AC,AN,AF,MAF,HWE
 
-    # 3) Report variant stats (MAF, HWE, imputation quality and optional genotype indicator) before filtering.
+    # 3) Report variant metrics before filtering.
     bcftools stats \${chr}_subset.filled.bcf > \${chr}_prefilter.stats.txt
-    if [ -n "${genotype_field}" ]; then
-      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\t%s\\n" "${info_field}" "${genotype_field}" > \${chr}_prefilter.variant_metrics.tsv
-      bcftools query \
-      -u \
-      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\t%INFO/${genotype_field}\\n" \
+    printf "${metric_header}\\n" > \${chr}_prefilter.variant_metrics.tsv
+    bcftools query -u -f "${metric_format}\\n" \
       \${chr}_subset.filled.bcf >> \${chr}_prefilter.variant_metrics.tsv
-    else
-      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\n" "${info_field}" > \${chr}_prefilter.variant_metrics.tsv
-      bcftools query \
-      -u \
-      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\n" \
-      \${chr}_subset.filled.bcf >> \${chr}_prefilter.variant_metrics.tsv
-    fi
 
-    # 4) Apply filters (MAF, HWE and imputation quality thresholds).
+    # 4) Apply configured variant filters.
     bcftools view \
-    -i "INFO/MAF>=${maf} && INFO/HWE>=${vcf_hwe_threshold} && INFO/${info_field}>=${imputation_th}" \
+    -i "${filter_expression}" \
     -Oz -o \${chr}_filtered.raw.vcf.gz \
     \${chr}_subset.filled.bcf
 
@@ -226,19 +230,9 @@ process FilterFinalVcf {
 
     # 6) Report post-filtering variant stats.
     bcftools stats \${chr}_filtered.vcf.gz > \${chr}_filtered.stats.txt
-    if [ -n "${genotype_field}" ]; then
-      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\t%s\\n" "${info_field}" "${genotype_field}" > \${chr}_filtered.variant_metrics.tsv
-      bcftools query \
-      -u \
-      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\t%INFO/${genotype_field}\\n" \
+    printf "${metric_header}\\n" > \${chr}_filtered.variant_metrics.tsv
+    bcftools query -u -f "${metric_format}\\n" \
       \${chr}_filtered.vcf.gz >> \${chr}_filtered.variant_metrics.tsv
-    else
-      printf "CHROM\\tPOS\\tID\\tMAF\\tHWE\\t%s\\tTYPED\\ttyped\\tIMPUTED\\timputed\\n" "${info_field}" > \${chr}_filtered.variant_metrics.tsv
-      bcftools query \
-      -u \
-      -f "%CHROM\\t%POS\\t%ID\\t%INFO/MAF\\t%INFO/HWE\\t%INFO/${info_field}\\t%INFO/TYPED\\t%INFO/typed\\t%INFO/IMPUTED\\t%INFO/imputed\\n" \
-      \${chr}_filtered.vcf.gz >> \${chr}_filtered.variant_metrics.tsv
-    fi
 
     # 7) Cleanup interim files.
     rm -f \${chr}_subset.bcf \${chr}_subset.bcf.csi \${chr}_subset.filled.bcf \${chr}_subset.filled.bcf.csi \${chr}_filtered.raw.vcf.gz \${chr}_filtered.raw.vcf.gz.csi

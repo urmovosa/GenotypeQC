@@ -8,14 +8,14 @@ The pipeline performs the following main steps:
 
 - Genotype QC and filtering:
   - In VCF mode, converts each chromosome to a PLINK dataset and merges the full input variant set before sample QC, PCA, and ancestry projection. In PLINK mode, starts directly from the supplied bed/bim/fam prefix.
-  - Applies standard variant QC filtering to the full post-sample-QC VCF, including Hardy-Weinberg equilibrium, minor allele frequency, and imputation-quality thresholds when VCF input is provided.
+  - Applies HWE and MAF filters to the full post-sample-QC VCF. For imputed input, an optional imputation-quality filter is enabled by default.
   - Applies sample-level missingness filtering.
   - Compares reported and genetic sex when known sex is supplied in a `.fam` file, and removes mismatched or unclear samples.
   - Removes samples with excess heterozygosity (+/-3 SD from the mean).
   - Removes related samples so that one sample from each related pair is kept in the data.
   - Projects samples into the 1000 Genomes reference space, harmonizes between hg19/GRCh37 and hg38/GRCh38 when needed, and flags genetic outliers.
   - Calculates the first 10 genetic principal components (PCs), used in downstream analyses as covariates to correct for population stratification.
-  - Filters the full imputed dataset to exclude samples and variants failing QC, with adjustable HWE, MAF, and imputation-quality thresholds when VCF input is provided.
+  - Filters the full input dataset to exclude samples and variants failing QC, using mode-appropriate thresholds for array, imputed, or WGS data.
 - Additional steps:
   - Organizes the QCd genotype data into the standard output folder structure.
   - Writes summary tables, ancestry projection outputs, and covariate files for downstream analysis.
@@ -69,6 +69,7 @@ NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
   --offline_runtime_dir "$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
   --vcf /absolute/path/to/imputed_vcfs \
+  --data_type imputed \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
   --output_dir /absolute/path/to/results/cohort_a \
@@ -85,6 +86,7 @@ NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
   --offline_runtime_dir "$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
   --bfile /absolute/path/to/study_prefix \
+  --data_type array \
   --cohort_name cohort_a \
   --genome_build GRCh37 \
   --output_dir /absolute/path/to/results/cohort_a \
@@ -114,6 +116,7 @@ docker run --rm -it \
   -e GENOTYPEQC_OFFLINE_RUNTIME_DIR=/offline-runtime \
   ghcr.io/urmovosa/genotypeqc:latest \
   --vcf /input/imputed_vcfs \
+  --data_type imputed \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
   --output_dir /workspace/results/cohort_a \
@@ -142,6 +145,7 @@ NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
   -profile local_vm \
   --runtime_cache_dir .offline_bundle/development_runtime_cache \
   --bfile /absolute/path/to/study_prefix \
+  --data_type array \
   --cohort_name cohort_a \
   --genome_build GRCh37 \
   --output_dir /absolute/path/to/results/cohort_a \
@@ -152,6 +156,7 @@ NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
 
 - `--cohort_name` Cohort label used in reports and output names.
 - `--genome_build` One of `hg18`, `GRCh36`, `hg19`, `GRCh37`, `hg38`, or `GRCh38`.
+- `--data_type` Input mode: `array`, `imputed`, or `wgs`. Use `array` with `--bfile`; `imputed` and `wgs` require `--vcf`. Default: `array`.
 - `--vcf` Directory containing per-chromosome `.vcf.gz` files, or
 - `--bfile` PLINK prefix without `.bed/.bim/.fam` extensions.
 - `--output_dir` Output directory.
@@ -168,8 +173,9 @@ NXF_SYNTAX_PARSER=v1 nextflow run main.nf \
 - `--qc_maf` MAF threshold for genotype QC. Default: `0.01`.
 - `--vcf_maf` MAF threshold for final VCF filtering. Default: `0.01`.
 - `--vcf_hwe` HWE threshold for final VCF filtering. Default: `1e-6`.
-- `--vcf_imp` Minimum imputation quality threshold for final VCF filtering. Default: `0.8`.
-- `--vcf_imp_field` INFO sub-field containing imputation quality. Default: `R2`.
+- `--enable_imputation_filter` Apply the imputation-quality filter in `imputed` mode. Default: `true`. Set to `false` when the source lacks a suitable quality field or the filter is not wanted.
+- `--vcf_imp` Minimum imputation quality threshold in `imputed` mode. Default: `0.8`.
+- `--vcf_imp_field` INFO sub-field containing imputation quality in `imputed` mode. Default: `R2`.
 - `--vcf_genotype_field` Optional INFO sub-field indicating typed/genotyped vs imputed variants.
 
 Development-only runtime options are documented in [scripts/OFFLINE.md](scripts/OFFLINE.md).
@@ -193,7 +199,8 @@ Notes:
 
 - Filtered VCF outputs use standardized variant IDs in `chr:pos_REF_ALT` format.
 - When the input is `--bfile`, the final `vcf_filtering/` outputs are not produced.
-- The typed-vs-imputed report diagnostic is shown only when the input VCF metrics contain a usable indicator field. Set `--vcf_genotype_field` when your source uses cohort-specific naming.
+- Imputation-quality and typed-vs-imputed report diagnostics are shown only for `--data_type imputed`. Set `--vcf_genotype_field` when your source uses a cohort-specific indicator field.
+- WGS reports summarize SNPs, indels, other variants, and transition/transversion ratios from `bcftools stats`; no imputation field is required or used.
 
 ## Debugging
 

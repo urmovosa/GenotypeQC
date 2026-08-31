@@ -13,6 +13,11 @@ params:
   N: 100
   S: 0.4
   SD: 3
+  data_type: "array"
+  imputation_filter_enabled: false
+  vcf_maf: 0.01
+  vcf_hwe: 0.000001
+  vcf_imp: 0.8
   genotype_field: ""
   imputation_metric_field: "R2"
 ---
@@ -28,6 +33,10 @@ Post-QC sample size for this cohort is: **`r library(data.table); geno_samples <
 LOF S-threhold for genetic outliers: `r params$S`
 
 Threshold of SD difference from mean genetic PC1 and PC2 is: `r params$SD`
+
+Input data type: **`r params$data_type`**.
+
+`r if (params$data_type == "imputed") paste0("Final VCF filters: MAF >= ", params$vcf_maf, "; HWE >= ", params$vcf_hwe, if (isTRUE(params$imputation_filter_enabled)) paste0("; ", params$imputation_metric_field, " >= ", params$vcf_imp) else "; imputation quality filter disabled", ".") else if (params$data_type == "wgs") paste0("Final VCF filters: MAF >= ", params$vcf_maf, "; HWE >= ", params$vcf_hwe, ".") else "Final VCF filtering is not produced for PLINK array input."`
 
 ## Covariates
 
@@ -88,28 +97,8 @@ ggplot(cov_specific, aes(x = value)) + geom_histogram(colour = "white") + facet_
 
 ```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis'}
 
-#wgs_table <- fread("wgs_qc_table_combined.txt", header = TRUE, data.table = FALSE)
-#wgs_settings <- fread("wgs_qc_settings_combined.txt", header = TRUE, data.table = FALSE)
 overview_table <- fread("outputfolder_gen/gen_data_summary/summary_table.txt", data.table = FALSE)
-
-# Check what the number of SNPs is that went into WGS specific QC
-#if (nrow(wgs_table != 0)) {
-
-  #wgs_table$Autosome <- ifelse(wgs_table$Chromosome %in% paste0("chr", c(1:22)), "Autosomes", "X chromosome")
-  #aggregated <- aggregate(wgs_table[columns_to_aggregate], by=list(wgs_table$Autosome), FUN=sum)
-
-  #rownames(aggregated) <- aggregated$Group.1
-
-  #wgs_overview_table <- t(aggregated[columns_to_aggregate])
-  #rownames(wgs_overview_table) <- column_labels[rownames(wgs_overview_table)]
-  #knitr::kable(wgs_overview_table)
-
-  #new_raw_row <- overview_table[overview_table["Stage"] == "Raw file"]
-  #new_raw_row["Nr. of SNPs"] <- sum(wgs_table[,"PASSQC"])
-  overview_table[overview_table["Stage"] == "Raw file", "Stage"] <- "Passed WGS specific SNP QC"
-  #overview_table <- rbind(data.frame(new_raw_row, overview_table))
-#}
-# List the set of variants
+overview_table[overview_table["Stage"] == "Raw file", "Stage"] <- "Input variants"
 
 knitr::kable(overview_table)
 ```
@@ -162,9 +151,9 @@ if (nrow(before_counts) == 0 || nrow(after_counts) == 0) {
               format(combined_before, big.mark = ",", scientific = FALSE),
               format(combined_after, big.mark = ",", scientific = FALSE)))
 
-  if (combined_after < 7000000) {
-    cat(sprintf("**Warning:** only **%s** variants remain after all filters. This is below the expected 7,000,000 genome-wide threshold; please review imputation quality and filtering settings.\n\n",
-                format(combined_after, big.mark = ",", scientific = FALSE)))
+  if (combined_before > 0) {
+    cat(sprintf("Variant retention after final filters: **%.2f%%**.\n\n",
+                100 * combined_after / combined_before))
   }
 
   knitr::kable(variant_counts_display)
@@ -197,9 +186,57 @@ ggplot(variant_counts_long, aes(x = Chromosome, y = Variant_count, fill = Stage)
 
 **Per-chromosome variant counts before and after QC filters.**
 
-### Genotyped and imputed variant counts before QC filters (diagnostic)
+`r if (params$data_type == "wgs") "### WGS variant composition" else ""`
 
-```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis'}
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis', eval = params$data_type == "wgs"}
+prefilter_stats_files <- list.files(vcf_metrics_dir, pattern = "_prefilter\\.stats\\.txt$", full.names = TRUE)
+filtered_stats_files <- list.files(vcf_metrics_dir, pattern = "_filtered\\.stats\\.txt$", full.names = TRUE)
+
+summarise_bcftools_stats <- function(files, stage_label) {
+  totals <- c(SNPs = 0, Indels = 0, Other = 0, Transitions = 0, Transversions = 0)
+  for (filepath in files) {
+    lines <- readLines(filepath, warn = FALSE)
+    sn_lines <- strsplit(grep("^SN\\t", lines, value = TRUE), "\\t")
+    get_sn <- function(key) {
+      matches <- vapply(sn_lines, function(fields) length(fields) >= 4 && fields[3] == key, logical(1))
+      if (!any(matches)) return(0)
+      sum(as.numeric(vapply(sn_lines[matches], `[[`, character(1), 4)), na.rm = TRUE)
+    }
+    totals["SNPs"] <- totals["SNPs"] + get_sn("number of SNPs:")
+    totals["Indels"] <- totals["Indels"] + get_sn("number of indels:")
+    totals["Other"] <- totals["Other"] + get_sn("number of others:")
+
+    tstv <- strsplit(grep("^TSTV\\t", lines, value = TRUE), "\\t")
+    if (length(tstv) > 0 && length(tstv[[1]]) >= 4) {
+      totals["Transitions"] <- totals["Transitions"] + as.numeric(tstv[[1]][3])
+      totals["Transversions"] <- totals["Transversions"] + as.numeric(tstv[[1]][4])
+    }
+  }
+
+  data.frame(
+    Stage = stage_label,
+    SNPs = totals["SNPs"],
+    Indels = totals["Indels"],
+    Other = totals["Other"],
+    Ti_Tv = if (totals["Transversions"] > 0) totals["Transitions"] / totals["Transversions"] else NA_real_,
+    row.names = NULL
+  )
+}
+
+if (length(prefilter_stats_files) == 0 || length(filtered_stats_files) == 0) {
+  cat("WGS variant composition is unavailable because per-chromosome bcftools stats files were not found.\n")
+} else {
+  wgs_stats <- rbind(
+    summarise_bcftools_stats(prefilter_stats_files, "Before final filters"),
+    summarise_bcftools_stats(filtered_stats_files, "After final filters")
+  )
+  knitr::kable(wgs_stats, digits = 3)
+}
+```
+
+`r if (params$data_type == "imputed") "### Genotyped and imputed variant counts before QC filters (diagnostic)" else ""`
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis', eval = params$data_type == "imputed"}
 typed_imputed_plot_ready <- FALSE
 user_genotype_field <- trimws(as.character(params$genotype_field))
 has_user_genotype_field <- nzchar(user_genotype_field) && !(tolower(user_genotype_field) %in% c("auto", "unknown", "na"))
@@ -363,7 +400,7 @@ if (nrow(typed_imputed_counts) == 0) {
 }
 ```
 
-```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = exists("typed_imputed_plot_ready") && typed_imputed_plot_ready}
+```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = params$data_type == "imputed" && exists("typed_imputed_plot_ready") && typed_imputed_plot_ready}
 typed_imputed_long <- data.table::melt(
   data.table::data.table(typed_imputed_counts),
   id.vars = "Chromosome",
@@ -381,7 +418,7 @@ ggplot(typed_imputed_long, aes(x = Chromosome, y = Variant_count, fill = Variant
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-**Per-chromosome genotyped vs imputed variant counts before QC filters. Plot shown when at least one usable genotyped/imputed indicator INFO field is available (including optional configured field).**
+`r if (params$data_type == "imputed") "**Per-chromosome genotyped vs imputed variant counts before QC filters. Plot shown when at least one usable genotyped/imputed indicator INFO field is available (including optional configured field).**" else ""`
 
 ### MAF distributions (genome-wide)
 
@@ -437,9 +474,9 @@ ggplot(maf_long, aes(x = MAF)) +
 
 **Genome-wide MAF histograms before and after QC filters.**
 
-### Imputation quality distributions (genome-wide)
+`r if (params$data_type == "imputed") "### Imputation quality distributions (genome-wide)" else ""`
 
-```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis'}
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis', eval = params$data_type == "imputed"}
 impq_plot_ready <- FALSE
 imp_metric_field <- trimws(as.character(params$imputation_metric_field))
 if (!nzchar(imp_metric_field)) {
@@ -522,7 +559,7 @@ if (nrow(impq_long) == 0) {
 }
 ```
 
-```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = exists("impq_plot_ready") && impq_plot_ready}
+```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = params$data_type == "imputed" && exists("impq_plot_ready") && impq_plot_ready}
 ggplot(impq_long, aes(x = Metric)) +
   geom_histogram(bins = 50, color = "white", fill = "darkseagreen4") +
   facet_grid(. ~ Stage, scales = "free_y") +
@@ -531,9 +568,9 @@ ggplot(impq_long, aes(x = Metric)) +
   ylab("Variant count")
 ```
 
-**Genome-wide imputation quality histograms before and after QC filters.**
+`r if (params$data_type == "imputed") "**Genome-wide imputation quality histograms before and after QC filters.**" else ""`
 
-Interpretation: for well-imputed data, this distribution should be **right-heavy** (most variants concentrated toward high imputation-quality values, e.g. near 1 for R2-style metrics).
+`r if (params$data_type == "imputed") "Interpretation: for well-imputed data, this distribution should be **right-heavy** (most variants concentrated toward high imputation-quality values, e.g. near 1 for R2-style metrics)." else ""`
 
 ### Allele frequency concordance with reference panel
 

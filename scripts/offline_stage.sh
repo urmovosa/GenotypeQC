@@ -278,6 +278,7 @@ Recommended offline run flow:
       --container_image "\$GENOTYPEQC_CONTAINER_IMAGE" \
       --offline_runtime_dir "\$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
      --vcf /absolute/path/to/imputed_vcfs \
+      --data_type imputed \
      --cohort_name cohort_a \
      --genome_build GRCh38 \
      --output_dir /absolute/path/to/results/cohort_a \

@@ -54,6 +54,7 @@ NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   --container_image "$GENOTYPEQC_CONTAINER_IMAGE" \
   --offline_runtime_dir "$GENOTYPEQC_OFFLINE_RUNTIME_DIR" \
   --vcf /absolute/path/to/imputed_vcfs \
+  --data_type imputed \
   --cohort_name cohort_a \
   --genome_build GRCh38 \
   --output_dir /absolute/path/to/results/cohort_a \
@@ -75,6 +76,7 @@ NXF_SYNTAX_PARSER=v1 nextflow run /path/to/GenotypeQC/main.nf \
   -profile local_vm \
   --runtime_cache_dir /path/to/GenotypeQC/.offline_bundle/development_runtime_cache \
   --bfile /absolute/path/to/study_prefix \
+  --data_type array \
   --cohort_name cohort_a \
   --genome_build GRCh37 \
   --output_dir /absolute/path/to/results/cohort_a \
