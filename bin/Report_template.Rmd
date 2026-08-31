@@ -7,12 +7,19 @@ output:
     code_folding: hide
     toc: true
 params:
-    dataqc_version: "unknown"
-    dataset_name: "unknown"
-    platform: "unknown"
-    N: 100
-    S: 0.4
-    SD: 3
+  dataqc_version: "unknown"
+  dataset_name: "unknown"
+  platform: "unknown"
+  N: 100
+  S: 0.4
+  SD: 3
+  data_type: "array"
+  imputation_filter_enabled: false
+  vcf_maf: 0.01
+  vcf_hwe: 0.000001
+  vcf_imp: 0.8
+  genotype_field: ""
+  imputation_metric_field: "R2"
 ---
 
 # Dataset
@@ -27,6 +34,10 @@ LOF S-threhold for genetic outliers: `r params$S`
 
 Threshold of SD difference from mean genetic PC1 and PC2 is: `r params$SD`
 
+Input data type: **`r params$data_type`**.
+
+`r if (params$data_type == "imputed") paste0("Final VCF filters: MAF >= ", params$vcf_maf, "; HWE >= ", params$vcf_hwe, if (isTRUE(params$imputation_filter_enabled)) paste0("; ", params$imputation_metric_field, " >= ", params$vcf_imp) else "; imputation quality filter disabled", ".") else if (params$data_type == "wgs") paste0("Final VCF filters: MAF >= ", params$vcf_maf, "; HWE >= ", params$vcf_hwe, ".") else "Final VCF filtering is not produced for PLINK array input."`
+
 ## Covariates
 
 ```{r, message = FALSE, warning = FALSE, echo = FALSE}
@@ -36,17 +47,19 @@ library(ggplot2)
 library(stringr)
 
 cov <- fread("CovariatePCs.txt", keepLeadingZeros = TRUE, colClasses = list(character = c(1)))
+gen_pc_cols <- grep("^GenPC", colnames(cov), value = TRUE)
+extra_cov_cols <- setdiff(colnames(cov), c("SampleID", gen_pc_cols))
 nr_add_cov <- 0
 ```
 
-`DataQC` pipeline has prepared `r ncol(cov) - 1` covariates: 10 first genetic PCs`r if (ncol(cov) > 111){ab <- ','}else{ab <- ' and'}; ab` 100 first expression PCs`r if (ncol(cov)> 111){outp <- paste0(' and ', ncol(cov) - 111, ' additional covariate(s).')} else {outp <- '.'}; outp`
+`DataQC` pipeline has prepared `r length(gen_pc_cols)` genetic principal components`r if (length(extra_cov_cols) > 0){paste0(' and ', length(extra_cov_cols), ' additional covariate(s).')} else {'.'}`
 
-`r if (ncol(cov) > 111){outp <- paste0('The names of additional covariates are: ', paste(colnames(cov)[-c(1:111)], collapse = ", "), '.'); outp}`
+`r if (length(extra_cov_cols) > 0){outp <- paste0('The names of additional covariates are: ', paste(extra_cov_cols, collapse = ", "), '.'); outp}`
 
-```{r, message = FALSE, eval = ncol(cov) > 111, warning = FALSE, echo = FALSE}
+```{r, message = FALSE, eval = length(extra_cov_cols) > 0, warning = FALSE, echo = FALSE}
 cov_specific <- melt(cov, id.vars = "SampleID")
 colnames(cov_specific) <- c("SampleID", "covariate", "value")
-cov_specific <- cov_specific[!(str_detect(cov_specific$covariate, "GenPC") | str_detect(cov_specific$covariate, "ExpPC")), ]
+cov_specific <- cov_specific[!str_detect(cov_specific$covariate, "GenPC"), ]
 
 cov_specific$covariate <- as.character(cov_specific$covariate)
 warning("COV SPECIFIC!!!")
@@ -75,7 +88,7 @@ ggplot(cov_specific, aes(x = value)) + geom_histogram(colour = "white") + facet_
 `r if (nr_add_cov == 0) {"\\end{comment}"}`
 
 `r if (nr_add_cov > 0) {"\\begin{comment}"}`
-**Fig 1. Histograms for additional covariates.** Not available, there are no additional covariates prepared on top of genotype PCs and expression PCs.
+**Fig 1. Histograms for additional covariates.** Not available, there are no additional covariates prepared on top of the genotype PCs.
 `r if (nr_add_cov > 0) {"\\end{comment}"}`
 
 ## Genotype QC report
@@ -84,31 +97,480 @@ ggplot(cov_specific, aes(x = value)) + geom_histogram(colour = "white") + facet_
 
 ```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis'}
 
-#wgs_table <- fread("wgs_qc_table_combined.txt", header = TRUE, data.table = FALSE)
-#wgs_settings <- fread("wgs_qc_settings_combined.txt", header = TRUE, data.table = FALSE)
 overview_table <- fread("outputfolder_gen/gen_data_summary/summary_table.txt", data.table = FALSE)
-
-# Check what the number of SNPs is that went into WGS specific QC
-#if (nrow(wgs_table != 0)) {
-
-  #wgs_table$Autosome <- ifelse(wgs_table$Chromosome %in% paste0("chr", c(1:22)), "Autosomes", "X chromosome")
-  #aggregated <- aggregate(wgs_table[columns_to_aggregate], by=list(wgs_table$Autosome), FUN=sum)
-
-  #rownames(aggregated) <- aggregated$Group.1
-
-  #wgs_overview_table <- t(aggregated[columns_to_aggregate])
-  #rownames(wgs_overview_table) <- column_labels[rownames(wgs_overview_table)]
-  #knitr::kable(wgs_overview_table)
-
-  #new_raw_row <- overview_table[overview_table["Stage"] == "Raw file"]
-  #new_raw_row["Nr. of SNPs"] <- sum(wgs_table[,"PASSQC"])
-  overview_table[overview_table["Stage"] == "Raw file", "Stage"] <- "Passed WGS specific SNP QC"
-  #overview_table <- rbind(data.frame(new_raw_row, overview_table))
-#}
-# List the set of variants
+overview_table[overview_table["Stage"] == "Raw file", "Stage"] <- "Input variants"
 
 knitr::kable(overview_table)
 ```
+
+### Variant counts in final filtered VCF
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis'}
+vcf_metrics_dir <- "outputfolder_gen/gen_data_summary/vcf_filtering"
+prefilter_files <- list.files(vcf_metrics_dir, pattern = "_prefilter\\.variant_metrics\\.tsv$", full.names = TRUE)
+filtered_files <- list.files(vcf_metrics_dir, pattern = "_filtered\\.variant_metrics\\.tsv$", full.names = TRUE)
+
+extract_chr <- function(filepath) {
+  sub("_(prefilter|filtered)\\.variant_metrics\\.tsv$", "", basename(filepath))
+}
+
+count_variants <- function(files) {
+  if (length(files) == 0) {
+    return(data.frame(Chromosome = character(0), Variants = integer(0), stringsAsFactors = FALSE))
+  }
+  counts <- lapply(files, function(filepath) {
+    dt <- data.table::fread(filepath, showProgress = FALSE)
+    data.frame(Chromosome = extract_chr(filepath), Variants = nrow(dt), stringsAsFactors = FALSE)
+  })
+  do.call(rbind, counts)
+}
+
+before_counts <- count_variants(prefilter_files)
+after_counts <- count_variants(filtered_files)
+
+if (nrow(before_counts) == 0 || nrow(after_counts) == 0) {
+  cat("VCF variant count summary not available: per-chromosome metrics files were not found in `outputfolder_gen/gen_data_summary/vcf_filtering`.\n")
+} else {
+  variant_counts <- merge(before_counts, after_counts, by = "Chromosome", all = TRUE, suffixes = c("_before", "_after"))
+  variant_counts[is.na(variant_counts$Variants_before), "Variants_before"] <- 0
+  variant_counts[is.na(variant_counts$Variants_after), "Variants_after"] <- 0
+
+  variant_counts$Chromosome <- factor(variant_counts$Chromosome, levels = unique(variant_counts$Chromosome[order(nchar(as.character(variant_counts$Chromosome)), as.character(variant_counts$Chromosome))]))
+
+  variant_counts_display <- data.frame(
+    Chromosome = as.character(variant_counts$Chromosome),
+    Before_QC_filters = as.integer(variant_counts$Variants_before),
+    After_QC_filters = as.integer(variant_counts$Variants_after),
+    stringsAsFactors = FALSE
+  )
+
+  combined_before <- sum(variant_counts_display$Before_QC_filters)
+  combined_after <- sum(variant_counts_display$After_QC_filters)
+
+  cat(sprintf("Combined (genome-wide) variant counts: **before QC filters = %s**, **after QC filters = %s**.\n\n",
+              format(combined_before, big.mark = ",", scientific = FALSE),
+              format(combined_after, big.mark = ",", scientific = FALSE)))
+
+  if (combined_before > 0) {
+    cat(sprintf("Variant retention after final filters: **%.2f%%**.\n\n",
+                100 * combined_after / combined_before))
+  }
+
+  knitr::kable(variant_counts_display)
+}
+```
+
+```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = exists("variant_counts")}
+variant_counts_long <- data.table::melt(
+  data.table::data.table(variant_counts),
+  id.vars = "Chromosome",
+  measure.vars = c("Variants_before", "Variants_after"),
+  variable.name = "Stage",
+  value.name = "Variant_count"
+)
+
+variant_counts_long$Stage <- factor(
+  variant_counts_long$Stage,
+  levels = c("Variants_before", "Variants_after"),
+  labels = c("Before QC filters", "After QC filters")
+)
+
+ggplot(variant_counts_long, aes(x = Chromosome, y = Variant_count, fill = Stage)) +
+  geom_col(position = "dodge") +
+  theme_bw() +
+  xlab("Chromosome") +
+  ylab("Variant count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Per-chromosome variant counts before and after QC filters.**
+
+`r if (params$data_type == "wgs") "### WGS variant composition" else ""`
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis', eval = params$data_type == "wgs"}
+prefilter_stats_files <- list.files(vcf_metrics_dir, pattern = "_prefilter\\.stats\\.txt$", full.names = TRUE)
+filtered_stats_files <- list.files(vcf_metrics_dir, pattern = "_filtered\\.stats\\.txt$", full.names = TRUE)
+
+summarise_bcftools_stats <- function(files, stage_label) {
+  totals <- c(SNPs = 0, Indels = 0, Other = 0, Transitions = 0, Transversions = 0)
+  for (filepath in files) {
+    lines <- readLines(filepath, warn = FALSE)
+    sn_lines <- strsplit(grep("^SN\\t", lines, value = TRUE), "\\t")
+    get_sn <- function(key) {
+      matches <- vapply(sn_lines, function(fields) length(fields) >= 4 && fields[3] == key, logical(1))
+      if (!any(matches)) return(0)
+      sum(as.numeric(vapply(sn_lines[matches], `[[`, character(1), 4)), na.rm = TRUE)
+    }
+    totals["SNPs"] <- totals["SNPs"] + get_sn("number of SNPs:")
+    totals["Indels"] <- totals["Indels"] + get_sn("number of indels:")
+    totals["Other"] <- totals["Other"] + get_sn("number of others:")
+
+    tstv <- strsplit(grep("^TSTV\\t", lines, value = TRUE), "\\t")
+    if (length(tstv) > 0 && length(tstv[[1]]) >= 4) {
+      totals["Transitions"] <- totals["Transitions"] + as.numeric(tstv[[1]][3])
+      totals["Transversions"] <- totals["Transversions"] + as.numeric(tstv[[1]][4])
+    }
+  }
+
+  data.frame(
+    Stage = stage_label,
+    SNPs = totals["SNPs"],
+    Indels = totals["Indels"],
+    Other = totals["Other"],
+    Ti_Tv = if (totals["Transversions"] > 0) totals["Transitions"] / totals["Transversions"] else NA_real_,
+    row.names = NULL
+  )
+}
+
+if (length(prefilter_stats_files) == 0 || length(filtered_stats_files) == 0) {
+  cat("WGS variant composition is unavailable because per-chromosome bcftools stats files were not found.\n")
+} else {
+  wgs_stats <- rbind(
+    summarise_bcftools_stats(prefilter_stats_files, "Before final filters"),
+    summarise_bcftools_stats(filtered_stats_files, "After final filters")
+  )
+  knitr::kable(wgs_stats, digits = 3)
+}
+```
+
+`r if (params$data_type == "imputed") "### Genotyped and imputed variant counts before QC filters (diagnostic)" else ""`
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis', eval = params$data_type == "imputed"}
+typed_imputed_plot_ready <- FALSE
+user_genotype_field <- trimws(as.character(params$genotype_field))
+has_user_genotype_field <- nzchar(user_genotype_field) && !(tolower(user_genotype_field) %in% c("auto", "unknown", "na"))
+
+typed_candidates <- c("typed", "TYPED")
+imputed_candidates <- c("imputed", "IMPUTED")
+
+if (has_user_genotype_field) {
+  user_field_candidates <- unique(c(user_genotype_field, tolower(user_genotype_field), toupper(user_genotype_field)))
+  # User-provided field is treated as a possible typed/imputed indicator depending on values.
+  typed_candidates <- unique(c(user_field_candidates, typed_candidates))
+  imputed_candidates <- unique(c(user_field_candidates, imputed_candidates))
+}
+
+to_flag <- function(x) {
+  y <- trimws(tolower(as.character(x)))
+  out <- rep(NA, length(y))
+
+  missing_vals <- c("", ".", "na", "nan")
+  out[y %in% c("1", "true", "t", "yes", "y", "typed", "genotyped")] <- TRUE
+  out[y %in% c("0", "false", "f", "no", "n", "imputed")] <- FALSE
+  out[y %in% missing_vals] <- NA
+
+  out
+}
+
+extract_flag <- function(dt, candidates) {
+  cols <- candidates[candidates %in% colnames(dt)]
+  if (length(cols) == 0) {
+    return(list(values = rep(NA, nrow(dt)), used_cols = character(0)))
+  }
+
+  merged <- rep(NA, nrow(dt))
+  for (cn in cols) {
+    vals <- to_flag(dt[[cn]])
+    idx <- is.na(merged) & !is.na(vals)
+    merged[idx] <- vals[idx]
+  }
+
+  list(values = merged, used_cols = cols)
+}
+
+summarise_typed_imputed <- function(files) {
+  if (length(files) == 0) {
+    return(list(
+      counts = data.frame(Chromosome = character(0), Genotyped = integer(0), Imputed = integer(0), Unknown = integer(0), stringsAsFactors = FALSE),
+      used_typed_cols = character(0),
+      used_imputed_cols = character(0),
+      typed_non_missing = 0,
+      imputed_non_missing = 0
+    ))
+  }
+
+  rows <- list()
+  used_typed <- character(0)
+  used_imputed <- character(0)
+  typed_non_missing <- 0
+  imputed_non_missing <- 0
+
+  for (filepath in files) {
+    dt <- data.table::fread(filepath, showProgress = FALSE)
+    typed_info <- extract_flag(dt, typed_candidates)
+    imputed_info <- extract_flag(dt, imputed_candidates)
+
+    used_typed <- union(used_typed, typed_info$used_cols)
+    used_imputed <- union(used_imputed, imputed_info$used_cols)
+    typed_non_missing <- typed_non_missing + sum(!is.na(typed_info$values))
+    imputed_non_missing <- imputed_non_missing + sum(!is.na(imputed_info$values))
+
+    status <- rep(NA_character_, nrow(dt))
+
+    status[!is.na(typed_info$values) & typed_info$values] <- "Genotyped"
+    status[is.na(status) & !is.na(imputed_info$values) & imputed_info$values] <- "Imputed"
+
+    # Fall back when only one INFO indicator is available in a file.
+    status[is.na(status) & !is.na(typed_info$values) & !typed_info$values & is.na(imputed_info$values)] <- "Imputed"
+    status[is.na(status) & !is.na(imputed_info$values) & !imputed_info$values & is.na(typed_info$values)] <- "Genotyped"
+
+    rows[[length(rows) + 1]] <- data.frame(
+      Chromosome = extract_chr(filepath),
+      Genotyped = sum(status == "Genotyped", na.rm = TRUE),
+      Imputed = sum(status == "Imputed", na.rm = TRUE),
+      Unknown = sum(is.na(status)),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  list(
+    counts = do.call(rbind, rows),
+    used_typed_cols = used_typed,
+    used_imputed_cols = used_imputed,
+    typed_non_missing = typed_non_missing,
+    imputed_non_missing = imputed_non_missing
+  )
+}
+
+typed_imputed_summary <- summarise_typed_imputed(prefilter_files)
+typed_imputed_counts <- typed_imputed_summary$counts
+
+has_imputed_info <- typed_imputed_summary$imputed_non_missing > 0
+has_typed_info <- typed_imputed_summary$typed_non_missing > 0
+has_indicator_info <- has_imputed_info || has_typed_info
+
+if (nrow(typed_imputed_counts) == 0) {
+  cat("Typed-vs-imputed diagnostic not available: prefilter per-chromosome metrics files were not found.\n")
+} else if (!has_indicator_info) {
+  cat("Typed-vs-imputed diagnostic not shown because no usable genotyped/imputed INFO indicator was detected in prefilter variant metrics.\n")
+  cat(sprintf("Checked INFO fields: typed candidates=`%s`; imputed candidates=`%s`.\n",
+              paste(typed_candidates, collapse = "`, `"),
+              paste(imputed_candidates, collapse = "`, `")))
+} else {
+  typed_imputed_plot_ready <- TRUE
+
+  typed_imputed_counts$Chromosome <- factor(
+    typed_imputed_counts$Chromosome,
+    levels = unique(typed_imputed_counts$Chromosome[order(nchar(as.character(typed_imputed_counts$Chromosome)), as.character(typed_imputed_counts$Chromosome))])
+  )
+
+  combined_row <- data.frame(
+    Chromosome = "Combined",
+    Genotyped = sum(typed_imputed_counts$Genotyped),
+    Imputed = sum(typed_imputed_counts$Imputed),
+    Unknown = sum(typed_imputed_counts$Unknown),
+    stringsAsFactors = FALSE
+  )
+
+  typed_imputed_display <- rbind(
+    data.frame(
+      Chromosome = as.character(typed_imputed_counts$Chromosome),
+      Genotyped = as.integer(typed_imputed_counts$Genotyped),
+      Imputed = as.integer(typed_imputed_counts$Imputed),
+      Unknown = as.integer(typed_imputed_counts$Unknown),
+      stringsAsFactors = FALSE
+    ),
+    combined_row
+  )
+
+  if (length(typed_imputed_summary$used_imputed_cols) > 0) {
+    cat(sprintf("Detected INFO indicator field(s): imputed=`%s`", paste(typed_imputed_summary$used_imputed_cols, collapse = ", ")))
+  } else {
+    cat("Detected INFO indicator field(s): imputed=`not detected`")
+  }
+
+  if (length(typed_imputed_summary$used_typed_cols) > 0 && has_typed_info) {
+    cat(sprintf(", typed=`%s`.", paste(typed_imputed_summary$used_typed_cols, collapse = ", ")))
+  } else {
+    cat(", typed=`not detected`.")
+  }
+  cat("\n\n")
+
+  cat(sprintf("Combined (genome-wide) before-QC counts: **genotyped = %s**, **imputed = %s**.",
+              format(combined_row$Genotyped, big.mark = ",", scientific = FALSE),
+              format(combined_row$Imputed, big.mark = ",", scientific = FALSE)))
+
+  if (combined_row$Unknown > 0) {
+    cat(sprintf(" **Note:** %s variants could not be classified from available INFO flags.", format(combined_row$Unknown, big.mark = ",", scientific = FALSE)))
+  }
+  cat("\n\n")
+
+  knitr::kable(typed_imputed_display)
+}
+```
+
+```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = params$data_type == "imputed" && exists("typed_imputed_plot_ready") && typed_imputed_plot_ready}
+typed_imputed_long <- data.table::melt(
+  data.table::data.table(typed_imputed_counts),
+  id.vars = "Chromosome",
+  measure.vars = c("Genotyped", "Imputed"),
+  variable.name = "Variant_type",
+  value.name = "Variant_count"
+)
+
+ggplot(typed_imputed_long, aes(x = Chromosome, y = Variant_count, fill = Variant_type)) +
+  geom_col(position = "dodge") +
+  theme_bw() +
+  xlab("Chromosome") +
+  ylab("Variant count before QC") +
+  scale_fill_brewer(palette = "Set2") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+`r if (params$data_type == "imputed") "**Per-chromosome genotyped vs imputed variant counts before QC filters. Plot shown when at least one usable genotyped/imputed indicator INFO field is available (including optional configured field).**" else ""`
+
+### MAF distributions (genome-wide)
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis'}
+maf_plot_ready <- FALSE
+
+collect_maf <- function(files, stage_label) {
+  if (length(files) == 0) {
+    return(data.frame(Stage = character(0), MAF = numeric(0), stringsAsFactors = FALSE))
+  }
+
+  maf_list <- lapply(files, function(filepath) {
+    dt <- data.table::fread(filepath, showProgress = FALSE)
+    if (!"MAF" %in% colnames(dt)) {
+      return(NULL)
+    }
+    maf_vals <- suppressWarnings(as.numeric(dt$MAF))
+    maf_vals <- maf_vals[!is.na(maf_vals)]
+    data.frame(Stage = stage_label, MAF = maf_vals, stringsAsFactors = FALSE)
+  })
+
+  maf_list <- Filter(Negate(is.null), maf_list)
+  if (length(maf_list) == 0) {
+    return(data.frame(Stage = character(0), MAF = numeric(0), stringsAsFactors = FALSE))
+  }
+
+  do.call(rbind, maf_list)
+}
+
+maf_before <- collect_maf(prefilter_files, "Before QC filters")
+maf_after <- collect_maf(filtered_files, "After QC filters")
+maf_long <- rbind(maf_before, maf_after)
+maf_long$Stage <- factor(maf_long$Stage, levels = c("Before QC filters", "After QC filters"))
+
+if (nrow(maf_long) == 0) {
+  cat("Genome-wide MAF histogram not available: no valid MAF values were found in per-chromosome metrics files.\n")
+} else {
+  maf_plot_ready <- TRUE
+  cat(sprintf("Genome-wide MAF values used for plotting: **before QC filters = %s**, **after QC filters = %s**.\n\n",
+              format(nrow(maf_before), big.mark = ",", scientific = FALSE),
+              format(nrow(maf_after), big.mark = ",", scientific = FALSE)))
+}
+```
+
+```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = exists("maf_plot_ready") && maf_plot_ready}
+ggplot(maf_long, aes(x = MAF)) +
+  geom_histogram(bins = 50, color = "white", fill = "steelblue") +
+  facet_grid(. ~ Stage, scales = "free_y") +
+  theme_bw() +
+  xlab("Minor allele frequency (MAF)") +
+  ylab("Variant count")
+```
+
+**Genome-wide MAF histograms before and after QC filters.**
+
+`r if (params$data_type == "imputed") "### Imputation quality distributions (genome-wide)" else ""`
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = 'asis', eval = params$data_type == "imputed"}
+impq_plot_ready <- FALSE
+imp_metric_field <- trimws(as.character(params$imputation_metric_field))
+if (!nzchar(imp_metric_field)) {
+  imp_metric_field <- "R2"
+}
+
+pick_imputation_metric_column <- function(dt, preferred_field = "R2") {
+  if (preferred_field %in% colnames(dt)) {
+    return(preferred_field)
+  }
+
+  known_non_metric <- c("CHROM", "POS", "ID", "MAF", "HWE", "TYPED", "typed", "IMPUTED", "imputed")
+  candidates <- setdiff(colnames(dt), known_non_metric)
+  if (length(candidates) == 0) {
+    return(NA_character_)
+  }
+
+  numeric_candidates <- candidates[sapply(candidates, function(cn) {
+    vals <- suppressWarnings(as.numeric(dt[[cn]]))
+    sum(!is.na(vals)) > 0
+  })]
+
+  if (length(numeric_candidates) == 0) {
+    return(NA_character_)
+  }
+
+  numeric_candidates[1]
+}
+
+collect_imputation_metric <- function(files, stage_label, preferred_field = "R2") {
+  if (length(files) == 0) {
+    return(list(data = data.frame(Stage = character(0), Metric = numeric(0), stringsAsFactors = FALSE), used_fields = character(0)))
+  }
+
+  metric_rows <- list()
+  used_fields <- character(0)
+
+  for (filepath in files) {
+    dt <- data.table::fread(filepath, showProgress = FALSE)
+    metric_col <- pick_imputation_metric_column(dt, preferred_field)
+    if (is.na(metric_col)) {
+      next
+    }
+
+    vals <- suppressWarnings(as.numeric(dt[[metric_col]]))
+    vals <- vals[!is.na(vals)]
+    if (length(vals) == 0) {
+      next
+    }
+
+    used_fields <- union(used_fields, metric_col)
+    metric_rows[[length(metric_rows) + 1]] <- data.frame(
+      Stage = stage_label,
+      Metric = vals,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  if (length(metric_rows) == 0) {
+    return(list(data = data.frame(Stage = character(0), Metric = numeric(0), stringsAsFactors = FALSE), used_fields = used_fields))
+  }
+
+  list(data = do.call(rbind, metric_rows), used_fields = used_fields)
+}
+
+imp_before_res <- collect_imputation_metric(prefilter_files, "Before QC filters", imp_metric_field)
+imp_after_res <- collect_imputation_metric(filtered_files, "After QC filters", imp_metric_field)
+impq_long <- rbind(imp_before_res$data, imp_after_res$data)
+impq_long$Stage <- factor(impq_long$Stage, levels = c("Before QC filters", "After QC filters"))
+impq_used_fields <- union(imp_before_res$used_fields, imp_after_res$used_fields)
+
+if (nrow(impq_long) == 0) {
+  cat("Genome-wide imputation quality histogram not available: no valid imputation quality values were found in per-chromosome metrics files.\n")
+} else {
+  impq_plot_ready <- TRUE
+  cat(sprintf("Imputation quality field(s) used for plotting: `%s`.\n\n", paste(impq_used_fields, collapse = "`, `")))
+  cat(sprintf("Genome-wide values used: **before QC filters = %s**, **after QC filters = %s**.\n\n",
+              format(nrow(imp_before_res$data), big.mark = ",", scientific = FALSE),
+              format(nrow(imp_after_res$data), big.mark = ",", scientific = FALSE)))
+}
+```
+
+```{r, fig.height = 4.5, fig.width = 10, fig.align = "center", message = FALSE, warning = FALSE, echo = FALSE, eval = params$data_type == "imputed" && exists("impq_plot_ready") && impq_plot_ready}
+ggplot(impq_long, aes(x = Metric)) +
+  geom_histogram(bins = 50, color = "white", fill = "darkseagreen4") +
+  facet_grid(. ~ Stage, scales = "free_y") +
+  theme_bw() +
+  xlab("Imputation quality metric") +
+  ylab("Variant count")
+```
+
+`r if (params$data_type == "imputed") "**Genome-wide imputation quality histograms before and after QC filters.**" else ""`
+
+`r if (params$data_type == "imputed") "Interpretation: for well-imputed data, this distribution should be **right-heavy** (most variants concentrated toward high imputation-quality values, e.g. near 1 for R2-style metrics)." else ""`
 
 ### Allele frequency concordance with reference panel
 
@@ -122,8 +584,25 @@ However:
 In both of the cases you should check if the input `.bed/.bim/.fam` files are correct and that there are no errors made in generating and/or processing those. If you do not pinpoint any issues with the input, please contact the lead analyst(s) for advice.
 
 ```{r, message = FALSE, warning = FALSE, echo = FALSE, fig.width = 6, fig.height = 6, fig.align = "center"}
-target <- fread("targetfile.afreq.gz", colClasses=c("character", "integer", "character", "character", "character", "numeric", "integer"))
-ref <- fread("1000Gref.afreq.gz", colClasses=c("character", "integer", "character", "character", "character", "numeric", "integer"))
+# Read plink2 afreq tables by header name so report rendering tolerates format additions.
+read_afreq_table <- function(filepath) {
+  afreq <- fread(filepath)
+  keep_cols <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQS")
+
+  missing_cols <- setdiff(keep_cols, colnames(afreq))
+  if (length(missing_cols) > 0) {
+    stop(sprintf(
+      "Allele-frequency file '%s' is missing required columns: %s",
+      filepath,
+      paste(missing_cols, collapse = ", ")
+    ))
+  }
+
+  afreq[, ..keep_cols]
+}
+
+target <- read_afreq_table("targetfile.afreq.gz")
+ref <- read_afreq_table("1000Gref.afreq.gz")
 
 target <- target[!is.na(target$ALT_FREQS), ]
 target <- target[, c(1:6), with = FALSE]
@@ -255,7 +734,7 @@ The files `AssignedPopulations.txt` and `1000G_PC_projections.txt` have been wri
 
 ### Individual genetic outliers in the target population
 
-Here we conduct PCA on the genotypes of eQTL samples only and investigate if there are any individual outliers. These are samples which have the same ancestry as bulk of the samples, however still show somewhat different genetic makeup. This might be due to considerable population stratification (different populations or ethnicities in the same superpopulation) or due to technical reasons. By default, we remove clear outliers.
+Here we conduct PCA on the QC-passed genotype samples and investigate if there are any individual outliers. These are samples which have the same ancestry as bulk of the samples, however still show somewhat different genetic makeup. This might be due to considerable population stratification (different populations or ethnicities in the same superpopulation) or due to technical reasons. By default, we remove clear outliers.
 
 #### Outlier samples
 
@@ -281,7 +760,7 @@ In case of doubt please contact the lead analyst(s) for advice and we will inves
 
 ![**Fig 8. PCA with all samples, outliers outlined with red.** Different shades of red indicate different classes of outliers: difference in SD from mean of PC1 and PC2 (pink), statistic of outlierness S (red), or both (dark red). Dashed lines indicate the SD thresholds to consider samples to outliers.](outputfolder_gen/gen_plots/PCA_outliers.png)  
 
-![**Fig 9. PCA with all samples, outliers removed.** You should not see any dramatic outliers or clusters on the first few PCs any more. These are the PCs which will be used as covariates in the eQTL meta-analysis.](outputfolder_gen/gen_plots/Target_PCs_postQC.png)
+![**Fig 9. PCA with all samples, outliers removed.** You should not see any dramatic outliers or clusters on the first few PCs any more. These are the PCs that can be used as covariates in downstream genotype-based analyses.](outputfolder_gen/gen_plots/Target_PCs_postQC.png)
 
 If you still observe clusters in the data, that could indicate that you still have different genotype batches in the data. If you know the genotype batches and splitting the data is unoptimal, you should specify the batch as additional covariate, using `--AdditionalCovariates` argument.
 

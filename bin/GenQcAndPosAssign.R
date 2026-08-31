@@ -126,7 +126,7 @@ snp_plinkKINGQC <- function(plink2.path,
 
 print(system_verbose)
 
-# Function
+# Read fam file (given a path to .bed or .fam file)
 read_fam <- function(path) {
   NAMES.FAM <- c("family.ID", "sample.ID", "paternal.ID",
                  "maternal.ID", "sex", "affection")
@@ -143,6 +143,388 @@ read_fam <- function(path) {
                           colClasses = list(character = c(1,2)), nThread = 1)
 
   return(fam)
+}
+
+# Normalize chromosome labels (remove "chr" prefix)
+standardize_chr_labels <- function(chromosomes) {
+  chr <- as.character(chromosomes)
+  chr <- sub("^chr", "", chr, ignore.case = TRUE)
+  chr <- toupper(chr)
+  chr[chr == "23"] <- "X"
+  chr
+}
+
+# Keep QC summary row schema across the filtering stages.
+qc_summary_row <- function(stage, n_snps, n_samples) {
+  data.frame(
+    stage = stage,
+    Nr_of_SNPs = n_snps,
+    Nr_of_samples = n_samples
+  )
+}
+
+# Read plink2 allele frequency output by header name so extra columns (newer formats) do not break parsing.
+read_plink2_afreq <- function(path) {
+  afreq <- fread(path, data.table = FALSE)
+
+  if ("#CHROM" %in% names(afreq)) {
+    names(afreq)[names(afreq) == "#CHROM"] <- "chr"
+  }
+  if ("POS" %in% names(afreq)) {
+    names(afreq)[names(afreq) == "POS"] <- "pos"
+  }
+
+  required_cols <- c("chr", "pos", "ID", "REF", "ALT", "ALT_FREQS", "OBS_CT")
+  missing_cols <- setdiff(required_cols, names(afreq))
+  if (length(missing_cols) > 0) {
+    stop(sprintf(
+      "Allele frequency file '%s' is missing required columns: %s",
+      path,
+      paste(missing_cols, collapse = ", ")
+    ))
+  }
+
+  afreq[, required_cols, drop = FALSE]
+}
+
+# Handle optional filter files.
+is_active_sample_filter <- function(path) {
+  if (is.null(path) || !nzchar(path)) {
+    return(FALSE)
+  }
+
+  if (!file.exists(path)) {
+    stop(sprintf("Sample filter file not found: %s", path))
+  }
+
+  isTRUE(file.info(path)$size > 0)
+}
+
+# Resolve bundled datafiles location (workdir or script location).
+resolve_bundled_data_path <- function(filename) {
+  cli_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", cli_args, value = TRUE)
+  script_dir <- NULL
+
+  if (length(file_arg) > 0) {
+    script_path <- sub("^--file=", "", file_arg[1])
+    script_dir <- dirname(normalizePath(script_path, winslash = "/", mustWork = TRUE))
+  }
+
+  candidates <- c(
+    file.path("data", filename),
+    if (!is.null(script_dir)) file.path(script_dir, "..", "data", filename)
+  )
+
+  for (candidate in unique(candidates)) {
+    if (!is.na(candidate) && file.exists(candidate)) {
+      return(normalizePath(candidate, winslash = "/", mustWork = TRUE))
+    }
+  }
+
+  file.path("data", filename)
+}
+
+ensure_directory <- function(path) {
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  normalizePath(path, winslash = "/", mustWork = TRUE)
+}
+
+make_executable <- function(exe) {
+  Sys.chmod(exe, mode = "0755")
+  normalizePath(exe, winslash = "/", mustWork = TRUE)
+}
+
+download_binary <- function(url, destfile) {
+  utils::download.file(url, destfile = destfile, mode = "wb", quiet = FALSE)
+  destfile
+}
+
+binary_runs_on_host <- function(exe, args = character()) {
+  output <- tryCatch(
+    suppressWarnings(system2(exe, args = args, stdout = TRUE, stderr = TRUE)),
+    error = function(e) structure(conditionMessage(e), status = 127L)
+  )
+  status <- attr(output, "status")
+  is.null(status) || !(status %in% c(126L, 127L))
+}
+
+detect_plink2_url <- function() {
+  sysname <- Sys.info()[["sysname"]]
+  machine <- Sys.info()[["machine"]]
+
+  if (sysname == "Darwin" && machine == "arm64") {
+    return("https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_arm64_20260504.zip")
+  }
+  if (sysname == "Darwin" && machine == "x86_64") {
+    return("https://s3.amazonaws.com/plink2-assets/alpha7/plink2_mac_20260504.zip")
+  }
+  if (sysname == "Linux" && machine %in% c("x86_64", "amd64")) {
+    return("https://s3.amazonaws.com/plink2-assets/alpha7/plink2_linux_x86_64_20260504.zip")
+  }
+
+  stop(sprintf(
+    "Automatic PLINK 2 download is not supported on %s/%s. Please provide --plink2_executable.",
+    sysname,
+    machine
+  ))
+}
+
+detect_liftover_url <- function() {
+  sysname <- Sys.info()[["sysname"]]
+  machine <- Sys.info()[["machine"]]
+
+  if (sysname == "Darwin" && machine == "arm64") {
+    return("https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.arm64/liftOver")
+  }
+  if (sysname == "Darwin" && machine == "x86_64") {
+    return("https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.x86_64/liftOver")
+  }
+  if (sysname == "Linux" && machine %in% c("x86_64", "amd64")) {
+    return("https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver")
+  }
+
+  stop(sprintf(
+    "Automatic liftOver download is not supported on %s/%s. Please provide --liftover_path.",
+    sysname,
+    machine
+  ))
+}
+
+ensure_plink2_executable <- function(target_path) {
+  if (is.null(target_path) || !nzchar(target_path)) {
+    stop("A PLINK 2 executable path must be provided.")
+  }
+
+  target_path <- path.expand(target_path)
+  if (file.exists(target_path)) {
+    target_path <- make_executable(target_path)
+    if (binary_runs_on_host(target_path, "--version")) {
+      return(target_path)
+    }
+
+    message(sprintf("PLINK 2 executable at %s is not usable on this host.", target_path))
+    unlink(target_path)
+  }
+
+  target_dir <- ensure_directory(dirname(target_path))
+  archive <- file.path(target_dir, "plink2.zip")
+  extracted <- file.path(target_dir, "plink2")
+
+  message(sprintf("PLINK 2 executable not found at %s.", target_path))
+  message("Attempting to download PLINK 2 executable into the runtime cache")
+
+  download_binary(detect_plink2_url(), archive)
+  utils::unzip(archive, files = "plink2", exdir = target_dir, junkpaths = TRUE)
+  unlink(archive)
+
+  if (normalizePath(extracted, winslash = "/", mustWork = TRUE) != target_path) {
+    ok <- file.rename(extracted, target_path)
+    if (!ok) {
+      ok <- file.copy(extracted, target_path, overwrite = TRUE)
+      unlink(extracted)
+    }
+    if (!ok) {
+      stop(sprintf("Failed to move downloaded PLINK 2 executable into %s.", target_path))
+    }
+  }
+
+  target_path <- make_executable(target_path)
+  if (!binary_runs_on_host(target_path, "--version")) {
+    stop(sprintf("Downloaded PLINK 2 executable at %s is not usable on this host.", target_path))
+  }
+
+  target_path
+}
+
+ensure_liftover_executable <- function(target_path) {
+  if (is.null(target_path) || !nzchar(target_path)) {
+    stop("A liftOver executable path must be provided.")
+  }
+
+  target_path <- path.expand(target_path)
+  if (file.exists(target_path)) {
+    target_path <- make_executable(target_path)
+    if (binary_runs_on_host(target_path)) {
+      return(target_path)
+    }
+
+    message(sprintf("liftOver executable at %s is not usable on this host.", target_path))
+    unlink(target_path)
+  }
+
+  target_dir <- ensure_directory(dirname(target_path))
+  target_file <- file.path(target_dir, basename(target_path))
+
+  message(sprintf("liftOver executable not found at %s.", target_path))
+  message("Attempting to download liftOver into the runtime cache")
+  download_binary(detect_liftover_url(), target_file)
+
+  target_file <- make_executable(target_file)
+  if (!binary_runs_on_host(target_file)) {
+    stop(sprintf("Downloaded liftOver executable at %s is not usable on this host.", target_file))
+  }
+
+  target_file
+}
+
+ensure_chain_files <- function(chain_dir) {
+  if (is.null(chain_dir) || !nzchar(chain_dir)) {
+    stop("A chain path must be provided when liftOver is required.")
+  }
+
+  chain_dir <- ensure_directory(chain_dir)
+  chain_urls <- c(
+    "hg19ToHg38.over.chain.gz" = "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+    "hg38ToHg19.over.chain.gz" = "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz"
+  )
+
+  for (chain_name in names(chain_urls)) {
+    chain_file <- file.path(chain_dir, chain_name)
+    if (!file.exists(chain_file)) {
+      message(sprintf("Chain file not found at %s.", chain_file))
+      message(sprintf("Attempting to download %s into the runtime cache", chain_name))
+      download_binary(chain_urls[[chain_name]], chain_file)
+    }
+  }
+
+  chain_dir
+}
+
+resolve_reference_prefix <- function(path) {
+  if (is.null(path) || !nzchar(path)) {
+    return(file.path("data", "1000G_phase3_common_norel"))
+  }
+  if (endsWith(path, "1000G_phase3_common_norel")) {
+    return(path)
+  }
+  file.path(path, "1000G_phase3_common_norel")
+}
+
+ensure_reference_1000g_prefix <- function(prefix_path) {
+  prefix_path <- resolve_reference_prefix(prefix_path)
+  reference_files <- paste0(prefix_path, c(".bed", ".bim", ".fam"))
+  normalized_prefix <- file.path(
+    normalizePath(dirname(prefix_path), winslash = "/", mustWork = TRUE),
+    basename(prefix_path)
+  )
+
+  if (all(file.exists(reference_files))) {
+    message(paste0("Found 1000G reference at ", prefix_path, "'.<bim/bed/fam>'."))
+    return(normalized_prefix)
+  }
+
+  reference_dir <- ensure_directory(dirname(prefix_path))
+  message(paste0("1000G reference does not exist at ", prefix_path, "'.<bim/bed/fam>'."))
+  message("Attempting to download the 1000G reference data into the runtime cache")
+
+  downloaded_prefix <- download_1000G(reference_dir)
+  file.path(
+    normalizePath(dirname(downloaded_prefix), winslash = "/", mustWork = TRUE),
+    basename(downloaded_prefix)
+  )
+}
+
+# Validate the genome build of the input data with a set of HapMap3 variants.
+check_genome_build <- function(target_bed_obj, genome_build) {
+  validation_path <- resolve_bundled_data_path("validation_snps.tsv")
+  if (!file.exists(validation_path)) {
+    stop(sprintf(
+      "Genome build validation failed: validation variants file not found at %s.",
+      validation_path
+    ))
+  }
+
+  validation_variants <- data.table::fread(
+    validation_path,
+    sep = "\t",
+    header = TRUE,
+    data.table = FALSE
+  )
+
+  required_cols <- c("rsid", "pos_hg19", "pos_hg38")
+  if (!all(required_cols %in% names(validation_variants))) {
+    stop(sprintf(
+      "Genome build validation failed: validation variants file must contain columns: %s.",
+      paste(required_cols, collapse = ", ")
+    ))
+  }
+
+  validation_variants$rsid <- as.character(validation_variants$rsid)
+  validation_variants$pos_hg19 <- as.integer(validation_variants$pos_hg19)
+  validation_variants$pos_hg38 <- as.integer(validation_variants$pos_hg38)
+  validation_variants$chr <- standardize_chr_labels(validation_variants$chr)
+
+  # Assume standard bigsnpr schema for input data column names
+  target_map <- data.frame(
+    variant_id = as.character(target_bed_obj$map$marker.ID),
+    chr = standardize_chr_labels(target_bed_obj$map$chromosome),
+    pos = as.integer(target_bed_obj$map$physical.pos),
+    stringsAsFactors = FALSE
+  )
+  target_map$chrpos_id <- paste0(target_map$chr, ":", target_map$pos)
+  build_is_hg38 <- genome_build %in% c("hg38", "GRCh38")
+  build_is_hg18 <- genome_build %in% c("hg18", "GRCh36")
+  mismatch_threshold <- 0.10
+
+  # Prefer rsID matching, fall back to chr:pos IDs in target data.
+  merge_expected <- function(pos_col, expected_label) {
+    expected_rsid <- validation_variants[, c("rsid", pos_col)]
+    names(expected_rsid)[2] <- expected_label
+    expected_rsid$variant_id <- expected_rsid$rsid
+    expected_rsid <- expected_rsid[, c("variant_id", expected_label)]
+    
+    merged_rsid <- merge(expected_rsid, target_map, by = "variant_id")
+
+    expected_chrpos <- validation_variants[, c("chr", pos_col)]
+    names(expected_chrpos)[2] <- expected_label
+    expected_chrpos$variant_id <- paste0(expected_chrpos$chr, ":", expected_chrpos[[expected_label]])
+    expected_chrpos <- expected_chrpos[, c("variant_id", expected_label)]
+    merged_chrpos <- merge(expected_chrpos, target_map, by.x = "variant_id", by.y = "chrpos_id")
+
+    if (nrow(merged_rsid) > 0) {
+      return(merged_rsid)
+    }
+
+    if (nrow(merged_chrpos) > 0) {
+      return(merged_chrpos)
+    }
+
+    stop("Genome build validation failed: none of the validation variants were found in the input data.")
+  }
+
+  # For hg18, ensure it does not look like hg19/hg38.
+  if (build_is_hg18) {
+    merged_hg38 <- merge_expected("pos_hg38", "pos_hg38_expected")
+    merged_hg19 <- merge_expected("pos_hg19", "pos_hg19_expected")
+
+    match_rate_hg38 <- mean(merged_hg38$pos_hg38_expected == merged_hg38$pos, na.rm = TRUE)
+    match_rate_hg19 <- mean(merged_hg19$pos_hg19_expected == merged_hg19$pos, na.rm = TRUE)
+    max_match_rate <- max(match_rate_hg38, match_rate_hg19, na.rm = TRUE)
+
+    if (max_match_rate > mismatch_threshold) {
+      stop(sprintf(
+        "Genome build validation failed: %.1f%% of validation variants match hg19/hg38 locations, expected hg18.",
+        max_match_rate * 100
+      ))
+    }
+
+    return(invisible(NULL))
+  }
+
+  # For hg19/hg38, require a high match rate to the expected build.
+  pos_col <- if (build_is_hg38) "pos_hg38" else "pos_hg19"
+  merged <- merge_expected(pos_col, "pos_expected")
+
+  mismatches <- merged$pos_expected != merged$pos
+  mismatch_rate <- mean(mismatches, na.rm = TRUE)
+  if (mismatch_rate > mismatch_threshold) {
+    bad <- merged[mismatches, ]
+    stop(sprintf(
+      "Genome build validation failed: %.1f%% of validation variants do not match %s location (e.g., %s).",
+      mismatch_rate * 100, genome_build, paste(head(bad$variant_id, 3), collapse = ", ")
+    ))
+  }
 }
 
 # Function modified from bigsnpr to work with offline chain files
@@ -211,8 +593,6 @@ option_list <- list(
     help = "Name of the target genotype file (bed/bim/fam format). Required file extension: .bed."),
     make_option(c("-f", "--fam"), type = "character", default = NULL,
     help = "Path to a separate fam file. Has priority over fam associated with --target_bed"),
-    make_option(c("-g", "--gen_phe"), type = "character",
-    help = "Tab-delimited genotype-to-phenotype sample ID linking file."),
     make_option(c("-s", "--sample_list"), type = "character",
     help = "Path to the file listing unrelated samples for reference data (tab-delimited .txt)."),
     make_option(c("-p", "--pops"), type = "character",
@@ -226,11 +606,21 @@ option_list <- list(
     make_option(c("-d", "--SD_threshold"), default = 0.4,
     help = paste0("Numeric threshold to declare samples outliers, based on the genotype PCs. ", 
                   "Defaults to 0.4 but should always be visually checked and changed, if needed.")),
+    make_option(c("--hwe_threshold"), default = 1e-6,
+    help = paste0("HWE p-value threshold for variant QC filters. ",
+            "Default 1e-6.")),
+        make_option(c("--qc_maf_threshold"), default = 0.01,
+        help = paste0("MAF threshold for PLINK variant QC filters. ",
+          "Default 0.01.")),
+    make_option(c("--king_threshold"), default = 2^-4.5,
+    help = paste0("KING kinship threshold for close relatives removal. ",
+            "Default 2^-4.5 removes third-degree or closer relatives.")),
     make_option(c("-i", "--inclusion_list"), type = "character",
     help = "Path to the file with sample IDs to include."),
     make_option(c("-e", "--exclusion_list"), type = "character",
     help = "Path to the file with sample IDs to exclude. This also removes samples from inclusion list."),
     make_option(c("-b", "--genome_build"), type = "character",
+    default = "hg19",
     help = "Genome build of the target genotype file."),
     make_option(c("--liftover_path"), type = "character",
     help = "Liftover executable."),
@@ -260,16 +650,22 @@ print(args$pruned_variants_sex_check)
 print(args$output)
 print(args$S_threshold)
 print(args$SD_threshold)
+print(args$hwe_threshold)
+print(args$qc_maf_threshold)
+print(args$king_threshold)
 print(args$exclusion_list)
 print(args$liftover_path)
 print(args$plink_executable)
 print(args$plink2_executable)
 print(args$chain_path)
 
-if (!is.numeric(args$S_threshold) | !is.numeric(args$SD_threshold) | !is.numeric(args$SD_threshold)){
-  message("Some of the QC thresholds is not numeric!")
+if (!is.numeric(args$S_threshold) || !is.numeric(args$SD_threshold) || !is.numeric(args$hwe_threshold) || !is.numeric(args$qc_maf_threshold) || !is.numeric(args$king_threshold)) {
+  message("Some of the QC thresholds are not numeric!")
   stop()
 }
+
+liftover_executable <- ensure_liftover_executable(args$liftover_path)
+liftover_bigsnpr <- liftover_executable
 
 # Map genome builds to build codes.
 build_code <- "b37"
@@ -292,6 +688,17 @@ if (args$genome_build %in% c("hg19", "GRCh37")) {
   stop(sprintf("Genome build %s is not recognized as an available genome build!", args$genome_build))
 }
 
+# The downloaded bigsnpr 1000G reference is in hg19 coordinates.
+reference_ucsc_code <- "hg19"
+needs_liftover_to_reference <- ucsc_code != reference_ucsc_code
+needs_liftover_from_reference <- ucsc_code != reference_ucsc_code
+
+chain_path <- args$chain_path
+if (needs_liftover_from_reference || needs_liftover_to_reference) {
+  chain_path <- ensure_chain_files(chain_path)
+  message(paste0("Found liftOver chain files at ", chain_path))
+}
+
 bed_simplepath <- stringr::str_replace(args$target_bed, ".bed", "")
 
 # Make output folder structure
@@ -301,90 +708,38 @@ dir.create(paste0(args$output, "/gen_data_QCd"))
 dir.create(paste0(args$output, "/gen_PCs"))
 dir.create(paste0(args$output, "/gen_data_summary"))
 
-# Download plink executables
-make_executable <- function(exe) {
-  Sys.chmod(exe, mode = (file.info(exe)$mode | "111"))
-}
+PLINK2 <- ensure_plink2_executable(args$plink2_executable)
+message(sprintf("PLINK 2 executable found at %s.", PLINK2))
 
-PLINK <- args$plink_executable
-PLINK2 <- args$plink2_executable
-
-if (is.null(PLINK2) || PLINK2 == "" || !file.exists(PLINK2)) {
-  message(sprintf("PLINK 2 executable empty, or not found at %s.", PLINK2))
-  message("Attempting to download PLINK 2 executable")
-
-  dir.create("plink")
-
-  # Download plink 2 executable
-  utils::download.file("https://s3.amazonaws.com/plink2-assets/alpha3/plink2_linux_x86_64_20221024.zip",
-                       destfile = "plink/plink2.zip", verbose = TRUE)
-  PLINK2 <- utils::unzip("plink/plink2.zip",
-                        files = "plink2",
-                        exdir = "plink")
+if (is.null(args$plink_executable) || !nzchar(args$plink_executable)) {
+  PLINK <- PLINK2
+  message(sprintf("Using PLINK 2 executable for PLINK-compatible commands at %s.", PLINK))
+} else if (file.exists(args$plink_executable)) {
+  PLINK <- make_executable(normalizePath(args$plink_executable, winslash = "/", mustWork = TRUE))
+  message(sprintf("PLINK-compatible executable found at %s.", PLINK))
 } else {
-  PLINK2 <- normalizePath(PLINK2) 
-  message(sprintf("PLINK 2 executable found at %s.", PLINK2))
+  message(sprintf("PLINK executable not found at %s; reusing the PLINK 2 binary instead.", args$plink_executable))
+  PLINK <- PLINK2
 }
+using_plink2_for_plink <- identical(PLINK, PLINK2)
 
-make_executable(PLINK2)
-
-if (is.null(PLINK) || PLINK == "" || !file.exists(PLINK)) {
-  message(sprintf("PLINK 1.9 executable empty, or not found at %s.", PLINK))
-  message("Attempting to download PLINK 1.9 executable")
-
-  dir.create("plink")
-  
-  # Download plink 1.9 executable
-  utils::download.file("https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20220402.zip",
-  destfile = "plink/plink.zip", verbose = TRUE)
-  PLINK <- utils::unzip("plink/plink.zip",
-                          files = "plink",
-                          exdir = "plink")
-} else {
-  PLINK <- normalizePath(PLINK)
-  message(sprintf("PLINK 1.9 executable found at %s.", PLINK))
-}
-
-make_executable(PLINK)
-
-ref_1000g_prefix <- "data"
-if (!is.null(args$ref_1000g) && args$ref_1000g != "") {
-  if (endsWith(args$ref_1000g, "1000G_phase3_common_norel"))
-  ref_1000g_prefix <- args$ref_1000g
-}
-
-if (file.exists(paste0(ref_1000g_prefix, ".bed"))
-  & file.exists(paste0(ref_1000g_prefix, ".bim"))
-  & file.exists(paste0(ref_1000g_prefix, ".fam"))) {
-  message(paste0("found 1000G reference at ", ref_1000g_prefix, "'.<bim/bed/fam>'."))
-} else {
-  # Download subsetted 1000G reference
-  message(paste0("1000G reference does not exist at ", ref_1000g_prefix, "'.<bim/bed/fam>'."))
-  message("Attempting to download the 1000G reference data")
-  bedfile <- download_1000G(dirname(ref_1000g_prefix))
-}
-
-## Chain files for LiftOver
-chain_path <- args$chain_path
-if (file.exists(paste0(chain_path, "/hg19ToHg38.over.chain.gz")) & 
-file.exists(paste0(chain_path, "/hg38ToHg19.over.chain.gz"))){message(paste0("Found liftOver chain files at ", chain_path))}
+ref_1000g_prefix <- ensure_reference_1000g_prefix(args$ref_1000g)
 
 ## Calculate AFs for reference data
 system(paste0(PLINK2, " --bfile ", ref_1000g_prefix, " --threads 4 --freq 'cols=+pos' --out 1000Gref"))
 
-if ("hg19" != ucsc_code) {
-  target_frequencies <- fread("1000Gref.afreq", sep="\t", data.table=F, header=T,
-                 col.names=c("chr", "pos", "ID", "REF", "ALT", "ALT_FREQS", "OBS_CT"))
+if (needs_liftover_from_reference) {
+  target_frequencies <- read_plink2_afreq("1000Gref.afreq")
 
-if (!is.null(args$chain_path) && args$chain_path != "") {
-  target_frequencies_mapped <- snp_modifyBuild2(
-    target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-    from = "hg19", to = ucsc_code, chain_path = chain_path)
-}else{
-  target_frequencies_mapped <- snp_modifyBuild(
-    target_frequencies, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-    from = "hg19", to = ucsc_code)
-}
+  if (!is.null(chain_path) && nzchar(chain_path)) {
+    target_frequencies_mapped <- snp_modifyBuild2(
+      target_frequencies, liftover_executable,
+      from = reference_ucsc_code, to = ucsc_code, chain_path = chain_path)
+  } else {
+    target_frequencies_mapped <- snp_modifyBuild(
+      target_frequencies, liftover_executable,
+      from = reference_ucsc_code, to = ucsc_code)
+  }
   colnames(target_frequencies_mapped)[1:2] <- c("#CHROM", "POS")
 
   fwrite(target_frequencies_mapped[!is.na(target_frequencies_mapped$POS),], "1000Gref.afreq.gz", col.names=T, row.names=F, quote=F, sep="\t")
@@ -400,19 +755,27 @@ message("Read in target data.")
 target_bed <- bed(args$target_bed)
 target_bed$.fam <- read_fam(args$target_bed)
 
+# Standardize chromosome labels via a plain vector; bed() map bindings are not mutable.
+target_chromosomes <- standardize_chr_labels(target_bed$map$chromosome)
+
+# Check chromosome count in input files
+chromosomes_present <- sort(unique(target_chromosomes))
+autosomes_present <- chromosomes_present[chromosomes_present %in% as.character(1:22)]
+has_x_chr <- "X" %in% chromosomes_present
+valid_chromosome_count <- length(autosomes_present) == 22 && (has_x_chr || length(chromosomes_present) == 22)
+
+if (!valid_chromosome_count) {
+  stop(sprintf(
+    "Invalid number of chromosomes in input data. Expected 22 or 23. Found: %s",
+    paste(chromosomes_present, collapse = ", ")
+  ))
+}
+
 ## Calculate AFs for target data
 system(paste0(PLINK2, " --bfile ", bed_simplepath, " --threads 4 --freq 'cols=+pos' --out targetfile"))
 system("gzip targetfile.afreq --force")
 
-# eQTL samples
-gte <- fread(args$gen_phe, sep = "\t", header = FALSE,
-             keepLeadingZeros = TRUE,
-             colClasses = "character")
-
-summary_table <- data.frame(stage = "Raw file", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
-
-if(nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]) < 100){stop("Less than 100 samples are in genotype-to-expression file!")}
+summary_table <- qc_summary_row("Input variants", target_bed$ncol, target_bed$nrow)
 
 # Prepare and normalise fam file
 #
@@ -445,58 +808,37 @@ if (!is.null(args$fam) && args$fam != "") {
 }
 
 # Write normalized fam
-fwrite(fam, "fam_normalized.fam", col.names=F, row.names=F, quote=F, sep="\t")
+fwrite(fam, "fam_normalized.fam", col.names = F, row.names = F, quote = F, sep = "\t")
 
 ## If specified, keep in only samples which are in the sample whitelist
-if (args$inclusion_list != "" & args$inclusion_list != "EmpiricalProbeMatching_AffyHumanExon.txt"){
+if (is_active_sample_filter(args$inclusion_list)) {
   inc_list <- fread(args$inclusion_list, header = FALSE,
                     keepLeadingZeros = TRUE, colClasses = "character")
   samples_to_include <- fam[fam$`sample.ID` %in% inc_list$V1, ]
   message("Sample inclusion filter active!")
 
-  temp_QC <- data.frame(stage = "Samples in inclusion list",
-                        Nr_of_SNPs = target_bed$ncol,
-                        Nr_of_samples = nrow(samples_to_include),
-                        Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.ID`, ]))
+  temp_QC <- qc_summary_row("Samples in inclusion list", target_bed$ncol, nrow(samples_to_include))
   summary_table <- rbind(summary_table, temp_QC)
 }
 
-## Keep in only samples which are present in genotype-to-expression file AND additional up to 5000 samples (better phasing)
-samples_to_include_gte <- fam[fam$`sample.ID` %in% gte$V1, ]
-
-if (exists("samples_to_include")){
-  print(table(samples_to_include_gte$`sample.ID` %in% samples_to_include$`sample.ID`))
-  samples_to_include_gte <- samples_to_include_gte[samples_to_include_gte$`sample.ID` %in% samples_to_include$`sample.ID`, ]
-  fam <- fam[fam$`sample.ID` %in% samples_to_include$`sample.ID`, ]
+if (!exists("samples_to_include")) {
+  samples_to_include <- fam
 }
 
-samples_to_include_temp <- samples_to_include_gte
-
-if (exists("samples_to_include") && nrow(samples_to_include) > 0){
-  samples_to_include <- samples_to_include[samples_to_include$`sample.ID` %in% samples_to_include_temp$`sample.ID`, ]
-  print(nrow(samples_to_include))
-} else {samples_to_include <- samples_to_include_temp}
-
-temp_QC <- data.frame(stage = "Samples in genotype-to-phenotype file", Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = nrow(samples_to_include),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.ID`, ]))
-summary_table <- rbind(summary_table, temp_QC)
-
 # Remove samples which are in the exclusion list
-if (args$exclusion_list != "" & args$exclusion_list != "EmpiricalProbeMatching_AffyU219.txt"){
-exc_list <- fread(args$exclusion_list, header = FALSE,
-                  keepLeadingZeros = TRUE, colClasses = "character")
-samples_to_include <- samples_to_include[!samples_to_include$`sample.ID` %in% exc_list$V1, ]
-message("Sample exclusion filter active!")
+if (is_active_sample_filter(args$exclusion_list)) {
+  exc_list <- fread(args$exclusion_list, header = FALSE,
+                    keepLeadingZeros = TRUE, colClasses = "character")
+  samples_to_include <- samples_to_include[!samples_to_include$`sample.ID` %in% exc_list$V1, ]
+  message("Sample exclusion filter active!")
 }
 
 fwrite(data.table(`#FID` = '0', `IID` = samples_to_include$`sample.ID`), "SamplesToInclude.txt", sep = "\t", quote = FALSE, col.names = TRUE, row.names = FALSE)
 
-temp_QC <- data.frame(stage = "Samples after removing exclusion list", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = nrow(samples_to_include),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.ID`, ]))
+temp_QC <- qc_summary_row("Samples after removing exclusion list", target_bed$ncol, nrow(samples_to_include))
 summary_table <- rbind(summary_table, temp_QC)
 
-# Remove samples not in GTE + 5k samples
+# Apply the retained sample list before variant QC.
 system(paste0(PLINK2, " --bfile ", bed_simplepath, " --fam fam_normalized.fam",
 " --output-chr 26 --keep SamplesToInclude.txt --geno 0.05 --make-bed --threads 4 --out ", bed_simplepath, "_filtered"))
 
@@ -519,17 +861,16 @@ snp_plinkQC(
   prefix.in = paste0(bed_simplepath, "_filtered"),
   prefix.out = paste0(bed_simplepath, "_QC"),
   file.type = "--bfile",
-  maf = 0.01,
+  maf = args$qc_maf_threshold,
   geno = 0.05,
   mind = 0.05,
-  hwe = 1e-6,
+  hwe = args$hwe_threshold,
   autosome.only = FALSE,
   extra.options = paste0("--output-chr 26 --not-chr 0 25-26 --set-all-var-ids ", variant_format, " --new-id-max-allele-len 10 truncate --threads 4"),
   verbose = TRUE
 )
 
-qc_bim <- fread(paste0(bed_simplepath, "_QC.bim"),
-                data.table = FALSE, keepLeadingZeros = TRUE)
+qc_bim <- fread(paste0(bed_simplepath, "_QC.bim"), data.table = FALSE, keepLeadingZeros = TRUE)
 consecutive_runs <- unlist(lapply(rle(qc_bim[,2])$lengths, seq_len))
 consequtive_runs_values <- qc_bim[consecutive_runs != 1, 2]
 qc_bim[consecutive_runs != 1, 2] <- paste(qc_bim[consecutive_runs != 1, 2], consecutive_runs[consecutive_runs != 1], sep = "_")
@@ -542,29 +883,37 @@ ref_bed <- bed(paste0(ref_1000g_prefix, ".bed"))
 target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
 target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
 
-temp_QC <- data.frame(stage = "SNP CR>0.95; HWE P>1e-6; MAF>0.01; GENO<0.05; MIND<0.05", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = target_bed$nrow,
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
+# Verify genome build in target (input) genotype data
+check_genome_build(
+  target_bed_obj = target_bed,
+  genome_build = args$genome_build
+)
+
+temp_QC <- qc_summary_row(
+  paste0("Variant CR>0.95; HWE P>", args$hwe_threshold, "; MAF>", args$qc_maf_threshold, "; GENO<0.05; MIND<0.05"),
+  target_bed$ncol,
+  target_bed$nrow
+)
 
 summary_table <- rbind(summary_table, temp_QC)
 
-## Assert that all IIDs are unique
+# Assert that all sample IDs are unique
 if (any(duplicated(target_bed$fam$`sample.ID`))) {
   stop("Individual sample IDs should be unique. Exiting...")
 }
 
-sex_check_data_set_chromosomes <- unique(target_bed$map$chromosome)
+sex_check_data_set_chromosomes <- unique(standardize_chr_labels(target_bed$map$chromosome))
 
 sex_check_out_path <- paste0(args$output, "/gen_data_QCd/SexCheck.txt")
 sex_check_removed_out_path <- paste0(args$output, "/gen_data_QCd/SexCheckFailed.txt")
 sex_check_samples <- target_bed$fam
 
-if (23 %in% sex_check_data_set_chromosomes) {
+if ("X" %in% sex_check_data_set_chromosomes) {
 
   # Do sex check
   message("Do sex check.")
 
   # Split x if needed
-
   pruned_variants_sex_check <- args$pruned_variants_sex_check
 
   if (!is.null(pruned_variants_sex_check)
@@ -577,27 +926,28 @@ if (23 %in% sex_check_data_set_chromosomes) {
     message("Using predefined pruned variants for sex-check:")
     message(pruned_variants_sex_check)
 
-    if (ucsc_code != "hg19") {
+    if (needs_liftover_from_reference) {
       variants_sex_check <- fread(
         pruned_variants_sex_check, sep = " ", data.table = FALSE, header = FALSE,
         col.names = c("chr", "pos", "pos.end", "id"))
 
       variants_sex_check$chr <- "X"
 
-    if (!is.null(args$chain_path) && args$chain_path != "") {
+      if (!is.null(chain_path) && nzchar(chain_path)) {
         variants_sex_check_new <- snp_modifyBuild2(
-        variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-        from = "hg19", to = ucsc_code, chain_path = chain_path)
-    }else{
+          variants_sex_check, liftover_executable,
+          from = reference_ucsc_code, to = ucsc_code, chain_path = chain_path)
+      } else {
         variants_sex_check_new <- snp_modifyBuild(
-        variants_sex_check, file.path(".", R.utils::getRelativePath(args$liftover_path)),
-        from = "hg19", to = ucsc_code)
-    }
+          variants_sex_check, liftover_executable,
+          from = reference_ucsc_code, to = ucsc_code)
+      }
 
       variants_sex_check_new$chr <- "23"
       variants_sex_check_new$pos.end <- variants_sex_check_new$pos
 
-      fwrite(variants_sex_check_new[!is.na(variants_sex_check_new$pos),], "mapped_sex_check_variants.txt", col.names=F, row.names=F, quote=F, sep=" ")
+            fwrite(variants_sex_check_new[!is.na(variants_sex_check_new$pos), ], "mapped_sex_check_variants.txt",
+              col.names = F, row.names = F, quote = F, sep = " ")
 
       system(paste0(
         PLINK, " --bfile ", bed_simplepath, "_QC", " --extract range mapped_sex_check_variants.txt",
@@ -633,10 +983,7 @@ if (23 %in% sex_check_data_set_chromosomes) {
   ## Annotate samples who have clear sex
 
   sexcheck$F_PASS <- !(sexcheck$F > 0.2 & sexcheck$F < 0.8)
-  temp_QC <- data.frame(stage = "Sex check (0.2<F<0.8)",
-                        Nr_of_SNPs = target_bed$ncol,
-                        Nr_of_samples = sum(sexcheck$F_PASS),
-                        Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% sexcheck[sexcheck$F_PASS == TRUE, ]$IID, ]))
+  temp_QC <- qc_summary_row("Sex check (0.2<F<0.8)", target_bed$ncol, sum(sexcheck$F_PASS))
   summary_table <- rbind(summary_table, temp_QC)
 
   sexcheck$MATCH_PASS <- case_when(sexcheck$PEDSEX == 0 ~ T,
@@ -647,10 +994,7 @@ if (23 %in% sex_check_data_set_chromosomes) {
 
   if (any(sexcheck$PEDSEX %in% c(1, 2))) {
 
-    temp_QC <- data.frame(stage = "Sex check (reported and genetic sex mismatch)",
-                          Nr_of_SNPs = target_bed$ncol,
-                          Nr_of_samples = sum(sexcheck$PASS),
-                          Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% sexcheck[sexcheck$PASS == TRUE, ]$IID, ]))
+    temp_QC <- qc_summary_row("Sex check (reported and genetic sex mismatch)", target_bed$ncol, sum(sexcheck$PASS))
     summary_table <- rbind(summary_table, temp_QC)
 
   } else {
@@ -673,7 +1017,7 @@ if (23 %in% sex_check_data_set_chromosomes) {
 } else {
   warning("No X chromosome present. Skipping sex-check...")
 
-  sexcheck <- sex_check_samples[,c(1,2,5)]
+  sexcheck <- sex_check_samples[, c(1, 2, 5)]
   colnames(sexcheck) <- c("FID", "IID", "PEDSEX")
   sexcheck$PEDSEX_COPY <- sexcheck$PEDSEX
   sexcheck$STATUS <- NA_character_
@@ -689,10 +1033,10 @@ snp_plinkQC(
   prefix.in = paste0(bed_simplepath, "_QC"),
   prefix.out = paste0(bed_simplepath, "_QC", "_QC"),
   file.type = "--bfile",
-  maf = 0.01,
+  maf = args$qc_maf_threshold,
   geno = 0.05,
   mind = 0.05,
-  hwe = 1e-6,
+  hwe = args$hwe_threshold,
   autosome.only = TRUE,
   extra.options = paste0("--output-chr 26 --remove ", sex_check_removed_out_path, " --threads 4"),
   verbose = TRUE
@@ -708,8 +1052,7 @@ system(paste0("mv ", bed_simplepath, "_QC_QC.fam ", bed_simplepath, "_QC.fam"))
 target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
 target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
 
-temp_QC <- data.frame(stage = "Removed X/Y", Nr_of_SNPs = target_bed$ncol, Nr_of_samples = nrow(target_bed$fam),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% target_bed$.fam$`sample.ID`, ]))
+temp_QC <- qc_summary_row("Removed X/Y", target_bed$ncol, nrow(target_bed$fam))
 summary_table <- rbind(summary_table, temp_QC)
 
 # Do heterozygosity check
@@ -743,12 +1086,29 @@ print(indices_of_het_passed_samples)
 
 fwrite(het_fail_samples, het_failed_samples_out_path, sep = "\t", quote = FALSE, row.names = FALSE)
 
+if (length(indices_of_het_failed_samples) > 0) {
+  # Remove heterozygosity-failed samples from the QC bed for downstream checks.
+  system(paste0(
+    PLINK2, " --bfile ", bed_simplepath, "_QC",
+    " --remove ", het_failed_samples_out_path,
+    " --make-bed --out ", bed_simplepath, "_QC_HET",
+    " --threads 4 --output-chr 26"
+  ))
+
+  system(paste0("rm ", bed_simplepath, "_QC.*"))
+  system(paste0("mv ", bed_simplepath, "_QC_HET.bed ", bed_simplepath, "_QC.bed"))
+  system(paste0("mv ", bed_simplepath, "_QC_HET.bim ", bed_simplepath, "_QC.bim"))
+  system(paste0("mv ", bed_simplepath, "_QC_HET.fam ", bed_simplepath, "_QC.fam"))
+
+  target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
+  target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
+  indices_of_het_passed_samples <- rows_along(target_bed)
+}
+
 het_s <- data.frame(ID = target_bed$.fam$`sample.ID`, FAMID = target_bed$.fam$`family.ID`)
 het_s <- het_s[!het_s$ID %in% het_fail_samples$IID, ]
 
-temp_QC <- data.frame(stage = "Excess heterozygosity (mean+/-3SD)", Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = length(indices_of_het_passed_samples),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% het_s$ID, ]))
+temp_QC <- qc_summary_row("Excess heterozygosity (mean+/-3SD)", target_bed$ncol, length(indices_of_het_passed_samples))
 
 summary_table <- rbind(summary_table, temp_QC)
 
@@ -765,63 +1125,71 @@ message("Projecting samples to 1000G reference.")
 unrelated_ref_samples <- fread(args$sample_list, keepLeadingZeros = TRUE, colClasses = 'character')
 unrelated_ref_samples <- as.numeric(unrelated_ref_samples$ind.row)
 
-if (ucsc_code != "hg19" && !is.null(args$chain_path) && args$chain_path != "") {
+if (needs_liftover_to_reference && !is.null(chain_path) && nzchar(chain_path)) {
+  message("Using offline version of PCA sample projection function.")
 
-message("Using offline version of PCA sample projection function.")
+  map_new <- setNames(target_bed$map[-3], c("chr", "rsid", "pos", "a1", "a0"))
 
-map_new <- setNames(target_bed$map[-3], c("chr", "rsid", "pos", "a1", "a0"))
+  map_new_lifted <- snp_modifyBuild2(
+    map_new,
+    liftOver = liftover_executable,
+    from = ucsc_code,
+    to = reference_ucsc_code,
+    chain_path = chain_path
+  )
 
-map_new_lifted <- snp_modifyBuild2(map_new, 
-liftOver = R.utils::getRelativePath(args$liftover_path), 
-from = ucsc_code,
-to = "hg19", 
-chain_path = chain_path)
+  lifted_bim <- data.table(
+    chr = map_new_lifted$chr,
+    rsid = map_new_lifted$rsid,
+    seq = 0,
+    pos = map_new_lifted$pos,
+    a1 = map_new_lifted$a1,
+    a0 = map_new_lifted$a0
+  )
 
-lifted_bim <- data.table(chr = map_new_lifted$chr,
-rsid = map_new_lifted$rsid,
-seq = 0,
-pos = map_new_lifted$pos,
-a1 = map_new_lifted$a1,
-a0 = map_new_lifted$a0)
+  fwrite(lifted_bim[!is.na(lifted_bim$pos), ], "lifted_map.bim", sep = "\t", col.names = FALSE, row.names = FALSE)
 
-fwrite(lifted_bim[!is.na(lifted_bim$pos), ], "lifted_map.bim", sep = "\t", col.names = FALSE, row.names = FALSE)
+  if (using_plink2_for_plink) {
+    system(paste0(PLINK2,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --sort-vars --make-pgen --out temp_for_PCA_sorted"))
+    system(paste0(PLINK2, " --pfile temp_for_PCA_sorted --make-bed --out temp_for_PCA"))
+  } else {
+    system(paste0(PLINK,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --make-bed --out temp_for_PCA"))
+  }
 
-system(paste0(PLINK,  " --bfile ",  bed_simplepath, "_QC --update-chr lifted_map.bim 1 2 --update-map lifted_map.bim 4 2 --make-bed --out temp_for_PCA"))
+  proj_PCA <- bed_projectPCA(
+    obj.bed.ref = ref_bed,
+    ind.row.ref = unrelated_ref_samples,
+    obj.bed.new = bed("temp_for_PCA.bed"),
+    ind.row.new = indices_of_het_passed_samples,
+    k = 10,
+    strand_flip = TRUE,
+    join_by_pos = TRUE,
+    match.min.prop = 0.01,
+    build.new = reference_ucsc_code,
+    build.ref = reference_ucsc_code,
+    liftOver = liftover_bigsnpr,
+    verbose = TRUE,
+    ncores = 4
+  )
 
-proj_PCA <- bed_projectPCA(
-  obj.bed.ref = ref_bed,
-  ind.row.ref = unrelated_ref_samples,
-  obj.bed.new = bed("temp_for_PCA.bed"),
-  ind.row.new = indices_of_het_passed_samples,
-  k = 10,
-  strand_flip = TRUE,
-  join_by_pos = TRUE,
-  match.min.prop = 0.01,
-  build.new = "hg19",
-  build.ref = "hg19",
-  liftOver = R.utils::getRelativePath(args$liftover_path),
-  verbose = TRUE,
-  ncores = 4
-)
-
-system("rm temp_for_PCA*")
+  system("rm -f temp_for_PCA* temp_for_PCA_sorted*")
 
 } else {
-proj_PCA <- bed_projectPCA(
-  obj.bed.ref = ref_bed,
-  ind.row.ref = unrelated_ref_samples,
-  obj.bed.new = target_bed,
-  ind.row.new = indices_of_het_passed_samples,
-  k = 10,
-  strand_flip = TRUE,
-  join_by_pos = TRUE,
-  match.min.prop = 0.01,
-  build.new = ucsc_code,
-  build.ref = "hg19",
-  liftOver = R.utils::getRelativePath(args$liftover_path),
-  verbose = TRUE,
-  ncores = 4
-)
+  proj_PCA <- bed_projectPCA(
+    obj.bed.ref = ref_bed,
+    ind.row.ref = unrelated_ref_samples,
+    obj.bed.new = target_bed,
+    ind.row.new = indices_of_het_passed_samples,
+    k = 10,
+    strand_flip = TRUE,
+    join_by_pos = TRUE,
+    match.min.prop = 0.01,
+    build.new = ucsc_code,
+    build.ref = reference_ucsc_code,
+    liftOver = liftover_bigsnpr,
+    verbose = TRUE,
+    ncores = 4
+  )
 }
 
 ## Visualise PCs
@@ -898,7 +1266,8 @@ p <- p00 + p0 + p1 + p2 + p3 + p4 + p5 + plot_layout(nrow = 4)
 
 ggsave(paste0(args$output, "/gen_plots/SamplesPCsProjectedTo1000G.png"), type = "cairo", height = 20, width = 9.5 * 1.6, units = "in", dpi = 300)
 ggsave(paste0(args$output, "/gen_plots/SamplesPCsProjectedTo1000G.pdf"), height = 20, width = 9.5 * 1.6, units = "in", dpi = 300)
-fwrite(abi[, -c(2, 3, ncol(abi))], paste0(args$output, "/gen_data_summary/1000G_PC_projections.txt"), sep = "\t", quote = FALSE )
+fwrite(abi[, -c(2, 3, ncol(abi))], paste0(args$output, "/gen_data_summary/1000G_PC_projections.txt"),
+  sep = "\t", quote = FALSE)
 
 ## Assign each sample to the superpopulation
 message("Assign each sample to 1000G superpopulation.")
@@ -913,53 +1282,48 @@ target_samples <- target_samples[, -1]
 population_assign_res <- data.frame(sample = rownames(target_samples), abi = rownames(target_samples))
 
 #### EUR
-for(population in c("EUR", "EAS", "AMR", "SAS", "AFR")){
-abi_e <- abi2[abi2$Superpopulation == population, ]
-head(abi_e)
+for (population in c("EUR", "EAS", "AMR", "SAS", "AFR")) {
+  abi_e <- abi2[abi2$Superpopulation == population, ]
+  head(abi_e)
 
-sup_pop_samples <- abi_e[, -c(2, 3, ncol(abi_e))]
+  sup_pop_samples <- abi_e[, -c(2, 3, ncol(abi_e))]
 
-sup_pop_samples <- sup_pop_samples[, c(1:4)]
-rownames(sup_pop_samples) <- sup_pop_samples$sample
-sup_pop_samples <- sup_pop_samples[, -1]
+  sup_pop_samples <- sup_pop_samples[, c(1:4)]
+  rownames(sup_pop_samples) <- sup_pop_samples$sample
+  sup_pop_samples <- sup_pop_samples[, -1]
 
-head(sup_pop_samples)
+  head(sup_pop_samples)
 
-comb <- rbind(target_samples, sup_pop_samples)
-head(comb)
-distance <- as.matrix(dist(comb, method = "euclidean"))
-head(distance)
-distance <- distance[c(1:nrow(target_samples)), -c(1:nrow(target_samples))]
-head(distance)
+  comb <- rbind(target_samples, sup_pop_samples)
+  head(comb)
+  distance <- as.matrix(dist(comb, method = "euclidean"))
+  head(distance)
+  distance <- distance[c(1:nrow(target_samples)), -c(1:nrow(target_samples))]
+  head(distance)
 
-head(rowMeans(distance))
+  head(rowMeans(distance))
 
-distance <- data.frame(sample = rownames(target_samples), MeanDistance = rowMeans(distance))
-colnames(distance)[2] <- population
+  distance <- data.frame(sample = rownames(target_samples), MeanDistance = rowMeans(distance))
+  colnames(distance)[2] <- population
 
-population_assign_res <- cbind(population_assign_res, distance[, -1])
+  population_assign_res <- cbind(population_assign_res, distance[, -1])
 
-print(paste("distance:", population))
-
+  print(paste("distance:", population))
 }
 
 colnames(population_assign_res)[3:ncol(population_assign_res)] <- c("EUR", "EAS", "AMR", "SAS", "AFR")
-fwrite(population_assign_res[, -1], paste0(args$output, "/gen_data_summary/PopAssignResults.txt"), sep = "\t", quote = FALSE )
+fwrite(population_assign_res[, -1], paste0(args$output, "/gen_data_summary/PopAssignResults.txt"), sep = "\t", quote = FALSE)
 
 # Find related samples
 message("Find related samples.")
 related <- snp_plinkKINGQC(
   plink2.path = PLINK2,
   bedfile.in = paste0(bed_simplepath, "_QC.bed"),
-  thr.king = 2^-4.5,
+  thr.king = args$king_threshold,
   make.bed = FALSE,
   ncores = 4,
   extra.options = paste0("--remove ", het_failed_samples_out_path)
 )
-
-# Filter in only related individuals from genotype-to-expression file
-
-related <- related[related$IID1 %in% gte$V1 & related$IID2 %in% gte$V1, ]
 
 fwrite(related, "related.txt", sep = "\t", quote = FALSE, row.names = FALSE)
 
@@ -1006,14 +1370,7 @@ if (length(related_individuals) > 0) {
     # Get the vertex with the least amount of degrees (edges)
     least_vertex_samples <- names(degrees_named)[min(degrees_named) == degrees_named]
 
-    # Prioritize vertices which are in genotype-to-expression file
-    if (length(least_vertex_samples[least_vertex_samples %in% gte$V1]) > 0){
-      # if there are multiple related sample IDs from GTE, then take just first
-      curr_vertex <- least_vertex_samples[least_vertex_samples %in% gte$V1][1]
-    } else {
-      # if there are multiple related sample IDs (not in GTEs), then take just first
-      curr_vertex <- least_vertex_samples[1]
-    }
+    curr_vertex <- sort(least_vertex_samples)[1]
 
     # Get all vertices that have an edge with curr_vertex
     related_vertices <- names(relatedness_graph[curr_vertex][relatedness_graph[curr_vertex] > 0])
@@ -1044,9 +1401,40 @@ if (length(related_individuals) > 0) {
   indices_of_passed_samples <- indices_of_het_passed_samples
 }
 
-temp_QC <- data.frame(stage = "Relatedness for eQTL samples: thr. KING>2^-4.5", Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = length(indices_of_passed_samples),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% het_s[!het_s$ID %in% samples_to_remove_due_to_relatedness, ]$ID, ])
+if (length(samples_to_remove_due_to_relatedness) > 0) {
+  # Remove relatedness-failed samples from the QC bed before PCA/outlier checks.
+  related_failed_samples_out_path <- paste0(args$output, "/gen_data_QCd/RelatednessFailed.txt")
+  fwrite(
+    data.table::data.table(FID = "0", IID = samples_to_remove_due_to_relatedness),
+    related_failed_samples_out_path,
+    sep = "\t",
+    quote = FALSE,
+    col.names = TRUE,
+    row.names = FALSE
+  )
+
+  system(paste0(
+    PLINK2, " --bfile ", bed_simplepath, "_QC",
+    " --remove ", related_failed_samples_out_path,
+    " --make-bed --out ", bed_simplepath, "_QC_REL",
+    " --threads 4 --output-chr 26"
+  ))
+
+  system(paste0("rm ", bed_simplepath, "_QC.*"))
+  system(paste0("mv ", bed_simplepath, "_QC_REL.bed ", bed_simplepath, "_QC.bed"))
+  system(paste0("mv ", bed_simplepath, "_QC_REL.bim ", bed_simplepath, "_QC.bim"))
+  system(paste0("mv ", bed_simplepath, "_QC_REL.fam ", bed_simplepath, "_QC.fam"))
+
+  target_bed <- bed(paste0(bed_simplepath, "_QC.bed"))
+  target_bed$.fam <- read_fam(paste0(bed_simplepath, "_QC"))
+  indices_of_het_passed_samples <- rows_along(target_bed)
+  indices_of_passed_samples <- rows_along(target_bed)
+}
+
+temp_QC <- qc_summary_row(
+  paste0("Relatedness: thr. KING>", args$king_threshold),
+  target_bed$ncol,
+  length(indices_of_passed_samples)
 )
 summary_table <- rbind(summary_table, temp_QC)
 
@@ -1096,12 +1484,14 @@ if (any(sd_outlier_selection)) {
 }
 
 PCs$outlier <- "no"
-if (nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]) > 0){
-PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]$outlier <- "S outlier"}
-if(nrow(PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]) > 0){
-PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]$outlier <- "SD outlier"}
-if(nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]) > 0){
-PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]$outlier <- "S and SD outlier"
+if (nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]) > 0) {
+  PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "no", ]$outlier <- "S outlier"
+}
+if (nrow(PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]) > 0) {
+  PCs[PCs$outlier_ind == "no" & PCs$sd_outlier == "yes", ]$outlier <- "SD outlier"
+}
+if (nrow(PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]) > 0) {
+  PCs[PCs$outlier_ind == "yes" & PCs$sd_outlier == "yes", ]$outlier <- "S and SD outlier"
 }
 # For first 2 PCs also remove samples which deviate from the mean
 
@@ -1124,8 +1514,7 @@ indices_of_passed_samples <- indices_of_passed_samples[PCs$outlier == "no"]
 samples_to_include <- data.frame(family.ID = target_bed$.fam$`family.ID`[indices_of_passed_samples], sample.IDD2 = target_bed$.fam$sample.ID[indices_of_passed_samples])
 
 temp_QC <- data.frame(stage = paste0("Outlier samples: thr. S>", Sthresh, " PC1/PC2 SD deviation thresh ", args$SD_threshold), Nr_of_SNPs = target_bed$ncol,
-Nr_of_samples = nrow(samples_to_include),
-Nr_of_eQTL_samples = nrow(gte[gte$V1 %in% samples_to_include$`sample.IDD2`, ]))
+Nr_of_samples = nrow(samples_to_include))
 summary_table <- rbind(summary_table, temp_QC)
 
 fwrite(data.table::data.table(samples_to_include), "SamplesToInclude.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
@@ -1143,21 +1532,21 @@ system(paste0(PLINK2, " -bfile ", args$output, "/gen_data_QCd/", bed_simplepath,
 "--make-bed ",
 "--out ", args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation_temp --threads 4"))
 
-# Do final SNP QC (for MAF, etc filters on filtered SNPs)
+# Do final variant QC (for MAF and related filters on retained variants)
 # Remove unfiltered samples
 system(paste0("rm ", args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation.*"))
 
-message("Final SNP QC.")
+message("Final variant QC.")
 
 snp_plinkQC(
   plink.path = PLINK2,
   prefix.in = paste0(args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation_temp"),
   prefix.out = paste0(args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation"),
   file.type = "--bfile",
-  maf = 0.01,
+  maf = args$qc_maf_threshold,
   geno = 0.05,
   mind = 0.05,
-  hwe = 1e-6,
+  hwe = args$hwe_threshold,
   autosome.only = TRUE,
   extra.options = "--output-chr 26 --threads 4",
   verbose = TRUE
@@ -1217,19 +1606,20 @@ ggsave(paste0(args$output, "/gen_plots/Target_PCs_scree_postQC.png"), type = "ca
 ggsave(paste0(args$output, "/gen_plots/Target_PCs_scree_postQC.pdf"), height = 5, width = 9, units = "in", dpi = 300)
 
 
-# Count samples in overlapping with GTE
+# Count final samples after genotype QC.
 final_samples <- fread(paste0(args$output, "/gen_data_QCd/", bed_simplepath, "_ToImputation.fam"), header = FALSE,
                        keepLeadingZeros = TRUE, colClasses = list(character = c(1,2)))
 
-temp_QC <- data.frame(stage = "QCd samples overlapping with genotype-to-expression file and SNP QC filters on full dataset",
-Nr_of_SNPs = bed_qc$ncol,
-Nr_of_samples = nrow(final_samples),
-Nr_of_eQTL_samples = nrow(final_samples[final_samples$V2 %in% gte$V1, ]))
+temp_QC <- qc_summary_row(
+  "QCd samples after variant QC filters on full dataset",
+  bed_qc$ncol,
+  nrow(final_samples)
+)
 summary_table <- rbind(summary_table, temp_QC)
 
 # Write out final summary
 message("Write out final sample summary table.")
-colnames(summary_table) <- c("Stage", "Nr. of SNPs", "Nr. of genotype samples", "Nr. of eQTL samples")
+colnames(summary_table) <- c("Stage", "Nr. of variants", "Nr. of genotype samples")
 fwrite(summary_table, paste0(args$output, "/gen_data_summary/summary_table.txt"), sep = "\t", quote = FALSE)
 
 system("rm *.bed", wait = TRUE, intern = FALSE)

@@ -4,6 +4,9 @@ args <- commandArgs(trailingOnly = TRUE)
 
 setDTthreads(1)
 
+sexcheck_path <- args[1]
+additional_covariates_path <- if (length(args) >= 2) args[2] else ""
+
 gen_cov <- fread("outputfolder_gen/gen_PCs/GenotypePCs.txt", keepLeadingZeros = TRUE, colClasses = list(character = 1))
 
 colnames(gen_cov) <- c("SampleID", paste0("GenPC", 1:10))
@@ -12,7 +15,7 @@ gen_cov$SampleID <- as.character(gen_cov$SampleID)
 cov <- gen_cov
 
 # Add sex
-sex <- fread(args[1], keepLeadingZeros = TRUE, , colClasses = list(character = c(1,2)))
+sex <- fread(sexcheck_path, keepLeadingZeros = TRUE, , colClasses = list(character = c(1,2)))
 
 if (!(is.na(sex$STATUS[1]) & is.na(sex$F)[1])){
 
@@ -26,11 +29,15 @@ if (!(is.na(sex$STATUS[1]) & is.na(sex$F)[1])){
 } else {message("Chr X not present and sex not included.")}
 
 
-if (!args[2] == "1000G_pops.txt"){
+if (!is.null(additional_covariates_path) && nzchar(additional_covariates_path)) {
+
+    if (!file.exists(additional_covariates_path)) {
+        stop(sprintf("Additional covariates file not found: %s", additional_covariates_path))
+    }
 
     message("Additional covariates are manually added.")
 
-    add_cov <- fread(args[2], colClasses = list("SampleID" = "character"))
+    add_cov <- fread(additional_covariates_path, colClasses = list("SampleID" = "character"))
     add_cov$SampleID <- as.character(add_cov$SampleID)
     add_cov <- add_cov[complete.cases(add_cov), ]
 
@@ -65,6 +72,10 @@ if (!args[2] == "1000G_pops.txt"){
         stop("Error: you have less covariates in the additional covariate file than in the PC file! Each sample has to be in the covariate file!")
     }
 
+}
+
+if (is.null(additional_covariates_path) || !nzchar(additional_covariates_path)) {
+    message("No additional covariates provided.")
 }
 
 fwrite(cov, "CovariatePCs.txt", sep = "\t", quote = FALSE, row.names = FALSE)

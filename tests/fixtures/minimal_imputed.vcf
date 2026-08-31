@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000000>
+##INFO=<ID=R2,Number=1,Type=Float,Description="Imputation quality">
+##INFO=<ID=TYPED,Number=0,Type=Flag,Description="Directly genotyped">
+##INFO=<ID=IMPUTED,Number=0,Type=Flag,Description="Imputed variant">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	s1	s2	s3	s4
+chr1	100	rs1	A	G	.	PASS	R2=0.9;TYPED	GT	0/0	0/1	1/1	0/1
+chr1	200	rs2	C	T	.	PASS	R2=0.5;IMPUTED	GT	0/0	0/1	1/1	0/1

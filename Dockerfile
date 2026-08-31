@@ -1,15 +1,69 @@
-FROM nfcore/base
-LABEL authors="urmovosa@ut.ee" \
-      description="Docker image containing requirements for calculating MDS and visualising population stratification"
+FROM --platform=linux/amd64 ubuntu:22.04
 
-COPY environment.yml /
-RUN conda env create -f /environment.yml && conda clean -a
-ENV PATH /opt/conda/envs/eQTLGenPopAssign/bin:$PATH
-ENV TAR="/bin/tar"
-RUN ln -s /bin/tar /bin/gtar
-RUN apt-get update && apt-get install -y gcc libcurl4
-COPY github_packages/lme4qtl-master.zip /
-RUN R -e "remotes::install_local('lme4qtl-master.zip')"
-RUN R -e "remotes::install_version('bigsnpr', version = '1.10.8', dependencies = TRUE, repos = 'http://cran.rstudio.com/', upgrade = 'never')"
-RUN wget http://bioconductor.org/packages/3.12/bioc/src/contrib/preprocessCore_1.52.1.tar.gz
-RUN R CMD INSTALL --configure-args="--disable-threading" preprocessCore_1.52.1.tar.gz
+ARG DEBIAN_FRONTEND=noninteractive
+ARG MINIFORGE_VERSION=24.11.0-0
+ARG NXF_VER=25.04.8
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
+    bzip2 \
+    ca-certificates \
+    curl \
+    file \
+    fonts-dejavu-core \
+    gfortran \
+    git \
+    libcurl4-openssl-dev \
+    libfontconfig1 \
+    libfreetype6-dev \
+    libfribidi-dev \
+    libharfbuzz-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libssl-dev \
+    libtiff5-dev \
+    libxml2-dev \
+    make \
+    openjdk-17-jre-headless \
+    procps \
+    unzip \
+    wget \
+    zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/miniforge.sh \
+       "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-Linux-x86_64.sh" \
+ && bash /tmp/miniforge.sh -b -p /opt/conda \
+ && rm -f /tmp/miniforge.sh \
+ && /opt/conda/bin/conda clean -afy
+
+COPY environment.yml /tmp/environment.yml
+
+RUN /opt/conda/bin/mamba env create -f /tmp/environment.yml \
+ && /opt/conda/bin/conda clean -afy \
+ && rm -f /tmp/environment.yml
+
+ENV PATH="/opt/conda/envs/genotypeqc/bin:/opt/conda/bin:${PATH}"
+ENV NXF_VER="${NXF_VER}"
+
+RUN Rscript -e "install.packages('R.utils', repos = 'https://cloud.r-project.org')" \
+ && Rscript -e "remotes::install_version('bigsnpr', version = '1.10.8', dependencies = TRUE, repos = 'https://cloud.r-project.org', upgrade = 'never')"
+
+RUN curl -fsSL https://get.nextflow.io | bash \
+ && mv nextflow /usr/local/bin/nextflow \
+ && chmod +x /usr/local/bin/nextflow
+
+COPY . /opt/genotypeqc
+
+RUN chmod +x /opt/genotypeqc/docker-entrypoint.sh /opt/genotypeqc/scripts/offline_fetch.sh \
+ && /opt/genotypeqc/scripts/offline_fetch.sh --skip-restricted-assets /opt/genotypeqc/.runtime
+
+ENV GENOTYPEQC_HOME=/opt/genotypeqc
+ENV PATH="/opt/genotypeqc/.runtime/bin:/opt/conda/envs/genotypeqc/bin:/opt/conda/bin:/usr/local/bin:${PATH}"
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/opt/genotypeqc/docker-entrypoint.sh"]
